@@ -6,26 +6,41 @@ Run:
 Then open http://127.0.0.1:5000
 """
 
+import configparser
+import os
 import socket
 import struct
-from datetime import datetime, timezone
+from collections import deque
+from datetime import datetime
 
 import mysql.connector
 from flask import Flask, render_template, request
 
 app = Flask(__name__)
 
+_CONFIG_PATHS = [
+    os.path.join(os.path.dirname(__file__), "uiconfig.ini"),
+    "/etc/kea/uiconfig.ini",
+]
+
+
+def _load_db_config():
+    cfg = configparser.ConfigParser()
+    cfg.read(_CONFIG_PATHS)
+    return cfg["mysql"]
+
 
 # ---------------------------------------------------------------------------
-# DB helpers (re-used from readlease4.py logic)
+# DB helpers
 # ---------------------------------------------------------------------------
 
 def get_connection():
+    db = _load_db_config()
     return mysql.connector.connect(
-        host="localhost",
-        database="kea",
-        user="kea",
-        password="secret",
+        host=db["host"],
+        database=db["database"],
+        user=db["user"],
+        password=db["password"],
     )
 
 
@@ -118,6 +133,24 @@ def fetch_leases(search=None, sort_col="address", sort_dir="asc"):
 # Routes
 # ---------------------------------------------------------------------------
 
+LOG_FILE = "/var/log/kea/kea-dhcp4.log"
+
+
+def read_log_tail(path, n=250):
+    """Return the last *n* lines of *path* as a list. Never raises."""
+    try:
+        with open(path, "r", errors="replace") as fh:
+            return list(deque(fh, maxlen=n))
+    except FileNotFoundError:
+        return None
+    except PermissionError:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
 @app.route("/")
 def index():
     search   = request.args.get("q", "").strip()
@@ -134,10 +167,38 @@ def index():
 
     return render_template(
         "index.html",
+        active_page="leases",
         leases=leases,
         search=search,
         sort_col=sort_col,
         sort_dir=sort_dir,
+        error=error,
+    )
+
+
+@app.route("/logs")
+def logs():
+    try:
+        lines = max(1, min(int(request.args.get("lines", 250)), 5000))
+    except ValueError:
+        lines = 250
+
+    log_lines = read_log_tail(LOG_FILE, lines)
+
+    if log_lines is None:
+        error = f"Cannot read {LOG_FILE} — file not found or permission denied."
+        log_lines = []
+    else:
+        # Strip trailing newlines from each line
+        log_lines = [l.rstrip("\n") for l in log_lines]
+        error = None
+
+    return render_template(
+        "logs.html",
+        active_page="logs",
+        log_lines=log_lines,
+        log_file=LOG_FILE,
+        lines=lines,
         error=error,
     )
 

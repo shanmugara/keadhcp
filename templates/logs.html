@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+
+{% block title %}Logs — Kea DHCP{% endblock %}
+{% block page_title %}<i class="bi bi-journal-text me-2"></i>Logs{% endblock %}
+{% block page_subtitle %}{{ log_file }}{% endblock %}
+
+{% block head %}
+<style>
+  .log-toolbar { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+  #line-filter { width: 220px; }
+  .level-badge {
+    display: inline-block; width: 56px; text-align: center;
+    font-size: .7rem; font-weight: 700; padding: 1px 4px;
+    border-radius: 3px; margin-right: 4px;
+  }
+  .lvl-ERROR  { background:#ff4444; color:#fff; }
+  .lvl-WARN   { background:#e3b341; color:#000; }
+  .lvl-INFO   { background:#238636; color:#fff; }
+  .lvl-DEBUG  { background:#1f6feb; color:#fff; }
+  .lvl-OTHER  { background:#444;    color:#ccc; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+{% if error %}
+<div class="alert alert-warning"><i class="bi bi-exclamation-triangle me-2"></i>{{ error }}</div>
+{% endif %}
+
+<!-- Toolbar -->
+<div class="log-toolbar mb-2">
+  <!-- Lines selector -->
+  <div class="input-group" style="width:180px;">
+    <label class="input-group-text" for="linesSelect"><i class="bi bi-list-ol"></i></label>
+    <select class="form-select form-select-sm" id="linesSelect">
+      {% for n in [100, 250, 500, 1000] %}
+      <option value="{{ n }}" {% if lines == n %}selected{% endif %}>Last {{ n }} lines</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <!-- Level filter -->
+  <select class="form-select form-select-sm" id="levelFilter" style="width:130px;">
+    <option value="">All levels</option>
+    <option value="ERROR">ERROR</option>
+    <option value="WARN">WARN</option>
+    <option value="INFO">INFO</option>
+    <option value="DEBUG">DEBUG</option>
+  </select>
+
+  <!-- Text search -->
+  <div class="input-group input-group-sm" style="width:250px;">
+    <span class="input-group-text"><i class="bi bi-search"></i></span>
+    <input type="text" class="form-control" id="line-filter" placeholder="Search log lines…">
+  </div>
+
+  <!-- Auto-refresh -->
+  <div class="form-check form-switch mb-0 ms-1">
+    <input class="form-check-input" type="checkbox" id="autoRefresh">
+    <label class="form-check-label text-muted small" for="autoRefresh">Auto-refresh (10 s)</label>
+  </div>
+
+  <a href="/logs?lines={{ lines }}" class="btn btn-sm btn-outline-secondary ms-auto">
+    <i class="bi bi-arrow-clockwise"></i> Refresh
+  </a>
+</div>
+
+<!-- Log output -->
+<div id="log-output">
+  {% if log_lines %}
+    {% for line in log_lines %}
+      {%- set lvl = "OTHER" -%}
+      {%- if " ERROR " in line or line.startswith("ERROR") -%}{%- set lvl = "ERROR" -%}
+      {%- elif " WARN "  in line or line.startswith("WARN")  -%}{%- set lvl = "WARN"  -%}
+      {%- elif " INFO "  in line or line.startswith("INFO")  -%}{%- set lvl = "INFO"  -%}
+      {%- elif " DEBUG " in line or line.startswith("DEBUG") -%}{%- set lvl = "DEBUG" -%}
+      {%- endif -%}
+      <div class="log-line" data-level="{{ lvl }}"><span class="level-badge lvl-{{ lvl }}">{{ lvl }}</span>{{ line | e }}</div>
+    {% endfor %}
+  {% else %}
+    <span class="text-muted">No log lines to display.</span>
+  {% endif %}
+</div>
+
+<p class="text-muted small mt-2">{{ log_lines | length }} line(s) shown from <code>{{ log_file }}</code>.</p>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // ── Lines selector → reload page with new ?lines= param
+  document.getElementById("linesSelect").addEventListener("change", function () {
+    window.location = "/logs?lines=" + this.value;
+  });
+
+  // ── Client-side level + text filter
+  function applyFilters() {
+    const level = document.getElementById("levelFilter").value.toUpperCase();
+    const text  = document.getElementById("line-filter").value.toLowerCase();
+    document.querySelectorAll(".log-line").forEach(el => {
+      const matchLevel = !level || el.dataset.level === level;
+      const matchText  = !text  || el.textContent.toLowerCase().includes(text);
+      el.style.display = matchLevel && matchText ? "" : "none";
+    });
+  }
+  document.getElementById("levelFilter").addEventListener("change", applyFilters);
+  document.getElementById("line-filter").addEventListener("input", applyFilters);
+
+  // ── Scroll to bottom on load
+  const out = document.getElementById("log-output");
+  out.scrollTop = out.scrollHeight;
+
+  // ── Auto-refresh
+  let timer = null;
+  document.getElementById("autoRefresh").addEventListener("change", function () {
+    if (this.checked) {
+      timer = setInterval(() => window.location.reload(), 10000);
+    } else {
+      clearInterval(timer);
+    }
+  });
+</script>
+{% endblock %}

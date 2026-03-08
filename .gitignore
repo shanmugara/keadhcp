@@ -35,3 +35,4 @@ flask_session/
 # Secrets / local config
 .env
 *.secret
+config.ini

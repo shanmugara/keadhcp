@@ -1,9 +1,22 @@
 import argparse
+import configparser
+import os
 import socket
 import struct
 
 import mysql.connector
 from tabulate import tabulate
+
+_CONFIG_PATHS = [
+    os.path.join(os.path.dirname(__file__), "config.ini"),
+    "/etc/keadhcp/config.ini",
+]
+
+
+def _load_db_config():
+    cfg = configparser.ConfigParser()
+    cfg.read(_CONFIG_PATHS)
+    return cfg["mysql"]
 
 
 def int_to_ip(addr):
@@ -26,11 +39,12 @@ def bytes_to_hex(raw):
 
 
 def get_connection():
+    db = _load_db_config()
     return mysql.connector.connect(
-        host="localhost",
-        database="kea",
-        user="kea",
-        password="secret",
+        host=db["host"],
+        database=db["database"],
+        user=db["user"],
+        password=db["password"],
     )
 
 

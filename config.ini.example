@@ -1,0 +1,5 @@
+[mysql]
+host     = localhost
+database = kea
+user     = kea
+password = secret

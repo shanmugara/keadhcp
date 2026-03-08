@@ -8,13 +8,26 @@ Usage:
 """
 
 import argparse
+import configparser
 import csv
+import os
 import socket
 import struct
 import sys
 from datetime import datetime
 
 import mysql.connector
+
+_CONFIG_PATHS = [
+    os.path.join(os.path.dirname(__file__), "config.ini"),
+    "/etc/keadhcp/config.ini",
+]
+
+
+def _load_db_config():
+    cfg = configparser.ConfigParser()
+    cfg.read(_CONFIG_PATHS)
+    return cfg["mysql"]
 
 
 # ---------------------------------------------------------------------------
@@ -56,11 +69,12 @@ def str_or_none(value):
 # ---------------------------------------------------------------------------
 
 def get_connection():
+    db = _load_db_config()
     return mysql.connector.connect(
-        host="localhost",
-        database="kea",
-        user="kea",
-        password="secret",
+        host=db["host"],
+        database=db["database"],
+        user=db["user"],
+        password=db["password"],
     )
 
 
