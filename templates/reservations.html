@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+
+{% block title %}Reservations — Kea DHCP{% endblock %}
+{% block page_title %}<i class="bi bi-bookmark-star me-2"></i>Reservations{% endblock %}
+{% block page_subtitle %}hosts table{% endblock %}
+
+{% block content %}
+
+{% if error %}
+<div class="alert alert-danger"><strong>Database error:</strong> {{ error }}</div>
+{% endif %}
+
+<!-- Stats row -->
+<div class="row g-3 mb-4">
+  <div class="col-sm-4 col-lg-2">
+    <div class="card stat-card text-white bg-primary">
+      <div class="card-body py-2">
+        <div class="fs-4 fw-bold">{{ hosts | length }}</div>
+        <div class="small">Total reservations</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-4 col-lg-2">
+    <div class="card stat-card text-white bg-info">
+      <div class="card-body py-2">
+        <div class="fs-4 fw-bold">{{ hosts | selectattr("ipv4_address") | list | length }}</div>
+        <div class="small">With IPv4 address</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-4 col-lg-2">
+    <div class="card stat-card text-white bg-secondary">
+      <div class="card-body py-2">
+        <div class="fs-4 fw-bold">{{ subnet_ids | length }}</div>
+        <div class="small">Subnets</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Search / filter bar -->
+<form method="get" class="row g-2 mb-3 align-items-center">
+  <input type="hidden" name="sort" value="{{ sort_col }}">
+  <input type="hidden" name="dir"  value="{{ sort_dir }}">
+  <div class="col-md-4">
+    <div class="input-group">
+      <span class="input-group-text"><i class="bi bi-search"></i></span>
+      <input type="text" name="q" class="form-control"
+             placeholder="Filter by IP, MAC/identifier, hostname…"
+             value="{{ search }}">
+    </div>
+  </div>
+  <div class="col-auto">
+    <div class="input-group">
+      <label class="input-group-text" for="subnetSelect"><i class="bi bi-diagram-3"></i>&nbsp;Subnet</label>
+      <select class="form-select" id="subnetSelect" name="subnet">
+        <option value="">All subnets</option>
+        {% for sid in subnet_ids %}
+        <option value="{{ sid }}" {% if subnet_id == sid|string %}selected{% endif %}>{{ sid }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  <div class="col-auto">
+    <button class="btn btn-primary" type="submit">Filter</button>
+    {% if search or subnet_id %}
+    <a href="/reservations" class="btn btn-outline-secondary">Clear</a>
+    {% endif %}
+  </div>
+</form>
+
+<!-- Reservations table -->
+<div class="table-wrapper bg-white rounded shadow-sm p-3">
+  <table class="table table-bordered table-hover table-sm align-middle mb-0">
+    <thead class="table-dark">
+      <tr>
+        {% set cols = [
+            ("host_id",               "ID"),
+            ("ipv4_address",          "IP Address"),
+            ("identifier",            "Identifier (MAC / ID)"),
+            ("identifier_type",       "Identifier Type"),
+            ("dhcp4_subnet_id",       "Subnet"),
+            ("hostname",              "Hostname"),
+            ("dhcp4_client_classes",  "Client Classes"),
+            ("dhcp4_next_server",     "Next Server"),
+            ("dhcp4_server_hostname", "Server Hostname"),
+            ("dhcp4_boot_file_name",  "Boot File"),
+            ("user_context",          "User Context"),
+            ("auth_key",              "Auth Key"),
+        ] %}
+        {% set sortable = ["host_id", "ipv4_address", "hostname", "dhcp4_subnet_id",
+                           "dhcp_identifier_type", "dhcp4_client_classes"] %}
+        {% for col_id, col_label in cols %}
+          {% if col_id in sortable %}
+            {% set sort_key = "dhcp_identifier_type" if col_id == "identifier_type" else col_id %}
+            {% set next_dir = "desc" if (sort_col == sort_key and sort_dir == "asc") else "asc" %}
+            <th>
+              <a href="?q={{ search }}&subnet={{ subnet_id }}&sort={{ sort_key }}&dir={{ next_dir }}">
+                {{ col_label }}
+                {% if sort_col == sort_key %}
+                  <i class="bi bi-caret-{{ 'up' if sort_dir == 'asc' else 'down' }}-fill sort-icon"></i>
+                {% endif %}
+              </a>
+            </th>
+          {% else %}
+            <th>{{ col_label }}</th>
+          {% endif %}
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for h in hosts %}
+      <tr>
+        <td class="text-muted small">{{ h.host_id }}</td>
+        <td>
+          {% if h.ipv4_address %}
+            <code>{{ h.ipv4_address }}</code>
+          {% else %}
+            <span class="text-muted">—</span>
+          {% endif %}
+        </td>
+        <td><code>{{ h.identifier }}</code></td>
+        <td>
+          <span class="badge
+            {% if h.identifier_type == 'hw-address' %}bg-primary
+            {% elif h.identifier_type == 'client-id' %}bg-success
+            {% elif h.identifier_type == 'duid' %}bg-warning text-dark
+            {% else %}bg-secondary
+            {% endif %}">{{ h.identifier_type }}</span>
+        </td>
+        <td>{{ h.dhcp4_subnet_id if h.dhcp4_subnet_id else '—' }}</td>
+        <td>{{ h.hostname or '—' }}</td>
+        <td>
+          {% if h.dhcp4_client_classes %}
+            <span class="badge bg-info text-dark">{{ h.dhcp4_client_classes }}</span>
+          {% else %}—{% endif %}
+        </td>
+        <td>{{ h.dhcp4_next_server or '—' }}</td>
+        <td>{{ h.dhcp4_server_hostname or '—' }}</td>
+        <td>
+          {% if h.dhcp4_boot_file_name %}
+            <code class="small">{{ h.dhcp4_boot_file_name }}</code>
+          {% else %}—{% endif %}
+        </td>
+        <td class="small text-muted">{{ h.user_context or '—' }}</td>
+        <td class="small">{{ h.auth_key or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="12" class="text-center text-muted py-4">No reservations found.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="text-muted small mt-2">{{ hosts | length }} reservation(s) shown</div>
+
+{% endblock %}

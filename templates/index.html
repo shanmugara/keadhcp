@@ -39,20 +39,33 @@
 </div>
 
 <!-- Search bar -->
-<form method="get" class="row g-2 mb-3">
+<form method="get" class="row g-2 mb-3 align-items-center">
   <input type="hidden" name="sort" value="{{ sort_col }}">
   <input type="hidden" name="dir"  value="{{ sort_dir }}">
   <div class="col-md-4">
     <div class="input-group">
       <span class="input-group-text"><i class="bi bi-search"></i></span>
       <input type="text" name="q" class="form-control"
-             placeholder="Filter by IP, MAC, hostname, subnet…"
+             placeholder="Filter by IP, MAC, hostname…"
              value="{{ search }}">
-      <button class="btn btn-primary" type="submit">Filter</button>
-      {% if search %}
-      <a href="/" class="btn btn-outline-secondary">Clear</a>
-      {% endif %}
     </div>
+  </div>
+  <div class="col-auto">
+    <div class="input-group">
+      <label class="input-group-text" for="subnetSelect"><i class="bi bi-diagram-3"></i>&nbsp;Subnet</label>
+      <select class="form-select" id="subnetSelect" name="subnet">
+        <option value="">All subnets</option>
+        {% for sid in subnet_ids %}
+        <option value="{{ sid }}" {% if subnet_id == sid|string %}selected{% endif %}>{{ sid }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  <div class="col-auto">
+    <button class="btn btn-primary" type="submit">Filter</button>
+    {% if search or subnet_id %}
+    <a href="/" class="btn btn-outline-secondary">Clear</a>
+    {% endif %}
   </div>
 </form>
 
@@ -127,7 +140,7 @@
 </div>
 
 <p class="text-muted small mt-2">
-  Showing {{ leases | length }} lease(s){% if search %} matching "<strong>{{ search }}</strong>"{% endif %}.
+  Showing {{ leases | length }} lease(s){% if search %} matching "<strong>{{ search }}</strong>"{% endif %}{% if subnet_id %} in subnet <strong>{{ subnet_id }}</strong>{% endif %}.
 </p>
 
 {% endblock %}

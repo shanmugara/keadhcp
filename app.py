@@ -63,7 +63,20 @@ def bytes_to_hex(raw):
 STATE_LABELS = {0: "Default", 1: "Declined", 2: "Expired-Reclaimed"}
 
 
-def fetch_leases(search=None, sort_col="address", sort_dir="asc"):
+def fetch_subnet_ids():
+    """Return a sorted list of distinct subnet_id values in lease4."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT subnet_id FROM lease4 ORDER BY subnet_id")
+        rows = cursor.fetchall()
+        cursor.close()
+        return [r[0] for r in rows]
+    finally:
+        conn.close()
+
+
+def fetch_leases(search=None, subnet_id=None, sort_col="address", sort_dir="asc"):
     allowed_sort_cols = {
         "address", "hwaddr", "hostname", "expire",
         "subnet_id", "state", "valid_lifetime", "pool_id",
@@ -76,9 +89,10 @@ def fetch_leases(search=None, sort_col="address", sort_dir="asc"):
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        if search:
+        if subnet_id is not None:
             cursor.execute(
-                f"SELECT * FROM lease4 ORDER BY {sort_col} {sort_dir}"
+                f"SELECT * FROM lease4 WHERE subnet_id = %s ORDER BY {sort_col} {sort_dir}",
+                (subnet_id,)
             )
         else:
             cursor.execute(
@@ -133,6 +147,95 @@ def fetch_leases(search=None, sort_col="address", sort_dir="asc"):
 # Routes
 # ---------------------------------------------------------------------------
 
+IDENTIFIER_TYPE_LABELS = {
+    0: "hw-address",
+    1: "duid",
+    2: "circuit-id",
+    3: "client-id",
+    4: "flex-id",
+}
+
+
+def fetch_reservations(search=None, subnet_id=None, sort_col="ipv4_address", sort_dir="asc"):
+    allowed_sort_cols = {
+        "host_id", "ipv4_address", "hostname", "dhcp4_subnet_id",
+        "dhcp_identifier_type", "dhcp4_client_classes",
+    }
+    if sort_col not in allowed_sort_cols:
+        sort_col = "ipv4_address"
+    if sort_dir not in ("asc", "desc"):
+        sort_dir = "asc"
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        if subnet_id is not None:
+            cursor.execute(
+                f"SELECT * FROM hosts WHERE dhcp4_subnet_id = %s ORDER BY {sort_col} {sort_dir}",
+                (subnet_id,),
+            )
+        else:
+            cursor.execute(
+                f"SELECT * FROM hosts ORDER BY {sort_col} {sort_dir}"
+            )
+        columns = [col[0] for col in cursor.description]
+        raw_rows = cursor.fetchall()
+        cursor.close()
+    finally:
+        conn.close()
+
+    reservations = []
+    for row in raw_rows:
+        r = dict(zip(columns, row))
+        ip = int_to_ip(r["ipv4_address"]) if r["ipv4_address"] else ""
+        next_server = int_to_ip(r["dhcp4_next_server"]) if r["dhcp4_next_server"] else ""
+        id_type = r["dhcp_identifier_type"]
+        if id_type == 0:
+            identifier = bytes_to_mac(r["dhcp_identifier"])
+        else:
+            identifier = bytes_to_hex(r["dhcp_identifier"])
+
+        if search:
+            needle = search.lower()
+            if not any(needle in str(v).lower() for v in [
+                ip, identifier, r["hostname"] or "",
+                r["dhcp4_subnet_id"], r["dhcp4_client_classes"] or "",
+            ]):
+                continue
+
+        reservations.append({
+            "host_id":             r["host_id"],
+            "identifier":          identifier,
+            "identifier_type":     IDENTIFIER_TYPE_LABELS.get(id_type, str(id_type)),
+            "dhcp4_subnet_id":     r["dhcp4_subnet_id"],
+            "ipv4_address":        ip,
+            "hostname":            r["hostname"] or "",
+            "dhcp4_client_classes": r["dhcp4_client_classes"] or "",
+            "dhcp4_next_server":   next_server,
+            "dhcp4_server_hostname": r["dhcp4_server_hostname"] or "",
+            "dhcp4_boot_file_name": r["dhcp4_boot_file_name"] or "",
+            "user_context":        r["user_context"] or "",
+            "auth_key":            r["auth_key"] or "",
+        })
+
+    return reservations
+
+
+def fetch_reservation_subnet_ids():
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT DISTINCT dhcp4_subnet_id FROM hosts "
+            "WHERE dhcp4_subnet_id IS NOT NULL ORDER BY dhcp4_subnet_id"
+        )
+        rows = cursor.fetchall()
+        cursor.close()
+        return [r[0] for r in rows]
+    finally:
+        conn.close()
+
+
 LOG_FILE = "/var/log/kea/kea-dhcp4.log"
 
 
@@ -153,14 +256,25 @@ def read_log_tail(path, n=250):
 
 @app.route("/")
 def index():
-    search   = request.args.get("q", "").strip()
-    sort_col = request.args.get("sort", "address")
-    sort_dir = request.args.get("dir", "asc")
+    search    = request.args.get("q", "").strip()
+    sort_col  = request.args.get("sort", "address")
+    sort_dir  = request.args.get("dir", "asc")
+    subnet_id = request.args.get("subnet", "").strip()
+
+    subnet_id_int = None
+    if subnet_id:
+        try:
+            subnet_id_int = int(subnet_id)
+        except ValueError:
+            subnet_id = ""
 
     error = None
     leases = []
+    subnet_ids = []
     try:
+        subnet_ids = fetch_subnet_ids()
         leases = fetch_leases(search=search or None,
+                              subnet_id=subnet_id_int,
                               sort_col=sort_col, sort_dir=sort_dir)
     except Exception as exc:
         error = str(exc)
@@ -170,6 +284,49 @@ def index():
         active_page="leases",
         leases=leases,
         search=search,
+        subnet_id=subnet_id,
+        subnet_ids=subnet_ids,
+        sort_col=sort_col,
+        sort_dir=sort_dir,
+        error=error,
+    )
+
+
+@app.route("/reservations")
+def reservations():
+    search    = request.args.get("q", "").strip()
+    sort_col  = request.args.get("sort", "ipv4_address")
+    sort_dir  = request.args.get("dir", "asc")
+    subnet_id = request.args.get("subnet", "").strip()
+
+    subnet_id_int = None
+    if subnet_id:
+        try:
+            subnet_id_int = int(subnet_id)
+        except ValueError:
+            subnet_id = ""
+
+    error = None
+    hosts = []
+    subnet_ids = []
+    try:
+        subnet_ids = fetch_reservation_subnet_ids()
+        hosts = fetch_reservations(
+            search=search or None,
+            subnet_id=subnet_id_int,
+            sort_col=sort_col,
+            sort_dir=sort_dir,
+        )
+    except Exception as exc:
+        error = str(exc)
+
+    return render_template(
+        "reservations.html",
+        active_page="reservations",
+        hosts=hosts,
+        search=search,
+        subnet_id=subnet_id,
+        subnet_ids=subnet_ids,
         sort_col=sort_col,
         sort_dir=sort_dir,
         error=error,
