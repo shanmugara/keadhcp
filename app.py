@@ -8,13 +8,14 @@ Then open http://127.0.0.1:5000
 
 import configparser
 import os
+import re
 import socket
 import struct
 from collections import deque
 from datetime import datetime
 
 import mysql.connector
-from flask import Flask, render_template, request
+from flask import Flask, jsonify, render_template, request
 
 app = Flask(__name__)
 
@@ -61,6 +62,33 @@ def bytes_to_hex(raw):
 
 
 STATE_LABELS = {0: "Default", 1: "Declined", 2: "Expired-Reclaimed"}
+
+# ---------------------------------------------------------------------------
+# Validation helpers
+# ---------------------------------------------------------------------------
+
+_MAC_RE = re.compile(r'^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$')
+_HOSTNAME_LABEL_RE = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$')
+
+
+def _validate_mac(mac):
+    return bool(_MAC_RE.match(mac))
+
+
+def _validate_hostname(name):
+    """Accept a short hostname or FQDN (RFC 1123, ≤253 chars)."""
+    if not name or len(name) > 253:
+        return False
+    labels = name.rstrip('.').split('.')
+    return bool(labels) and all(_HOSTNAME_LABEL_RE.match(lbl) for lbl in labels)
+
+
+def _mac_to_bytes(mac):
+    return bytes(int(b, 16) for b in mac.split(':'))
+
+
+def _ip_to_int(ip):
+    return struct.unpack(">I", socket.inet_pton(socket.AF_INET, ip))[0]
 
 
 def fetch_subnet_ids():
@@ -331,6 +359,98 @@ def reservations():
         sort_dir=sort_dir,
         error=error,
     )
+
+
+# ---------------------------------------------------------------------------
+# REST API
+# ---------------------------------------------------------------------------
+
+@app.route("/api/reservations", methods=["POST"])
+def api_create_reservation():
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "JSON body required"}), 400
+
+    errors = {}
+
+    mac = (data.get("dhcp_identifier") or "").strip()
+    if not mac:
+        errors["dhcp_identifier"] = "Required"
+    elif not _validate_mac(mac):
+        errors["dhcp_identifier"] = "Must be a valid MAC address (xx:xx:xx:xx:xx:xx)"
+
+    ipv4 = (data.get("ipv4_address") or "").strip()
+    if not ipv4:
+        errors["ipv4_address"] = "Required"
+    else:
+        try:
+            socket.inet_pton(socket.AF_INET, ipv4)
+        except socket.error:
+            errors["ipv4_address"] = "Must be a valid IPv4 address"
+
+    raw_subnet = data.get("dhcp4_subnet_id")
+    subnet_id_val = None
+    if raw_subnet is None or str(raw_subnet).strip() == "":
+        errors["dhcp4_subnet_id"] = "Required"
+    else:
+        try:
+            subnet_id_val = int(raw_subnet)
+            if subnet_id_val < 0:
+                raise ValueError
+        except (ValueError, TypeError):
+            errors["dhcp4_subnet_id"] = "Must be a non-negative integer"
+
+    hostname = (data.get("hostname") or "").strip()
+    if not hostname:
+        errors["hostname"] = "Required"
+    elif not _validate_hostname(hostname):
+        errors["hostname"] = "Must be a valid DNS name (shortname or FQDN)"
+
+    if errors:
+        return jsonify({"errors": errors}), 422
+
+    try:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO hosts
+                  (dhcp_identifier, dhcp_identifier_type,
+                   dhcp4_subnet_id, ipv4_address, hostname)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (_mac_to_bytes(mac), 0, subnet_id_val, _ip_to_int(ipv4), hostname),
+            )
+            conn.commit()
+            new_id = cursor.lastrowid
+            cursor.close()
+        finally:
+            conn.close()
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    return jsonify({"host_id": new_id, "message": "Reservation created"}), 201
+
+
+@app.route("/api/reservations/<int:host_id>", methods=["DELETE"])
+def api_delete_reservation(host_id):
+    try:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM hosts WHERE host_id = %s", (host_id,))
+            conn.commit()
+            affected = cursor.rowcount
+            cursor.close()
+        finally:
+            conn.close()
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    if affected == 0:
+        return jsonify({"error": "Reservation not found"}), 404
+    return jsonify({"message": "Reservation deleted"}), 200
 
 
 @app.route("/logs")
