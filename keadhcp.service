@@ -1,0 +1,22 @@
+[Unit]
+Description=Kea DHCP Lease Viewer
+After=network.target mysql.service mariadb.service
+Wants=mysql.service mariadb.service
+
+[Service]
+Type=simple
+User=keadhcp
+Group=keadhcp
+WorkingDirectory=/opt/keadhcp
+Environment="PATH=/opt/keadhcp/venv/bin"
+ExecStart=/opt/keadhcp/venv/bin/gunicorn \
+    --workers 4 \
+    --bind 0.0.0.0:5000 \
+    --access-logfile /var/log/keadhcp/access.log \
+    --error-logfile  /var/log/keadhcp/error.log \
+    app:app
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
