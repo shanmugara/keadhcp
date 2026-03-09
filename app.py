@@ -6,276 +6,25 @@ Run:
 Then open http://127.0.0.1:5000
 """
 
-import configparser
-import os
-import re
 import socket
-import struct
-from collections import deque
-from datetime import datetime
 
-import mysql.connector
-from flask import Flask, jsonify, render_template, request
+from flask import Blueprint, Flask, jsonify, render_template, request
+
+from db import _ip_to_int, _mac_to_bytes, bytes_to_hex, bytes_to_mac, get_connection, int_to_ip
+from queries import (
+    IDENTIFIER_TYPE_LABELS,
+    LOG_FILE,
+    fetch_leases,
+    fetch_reservation_subnet_ids,
+    fetch_reservations,
+    fetch_subnet_ids,
+    read_log_tail,
+)
+from validators import _validate_hostname, _validate_mac
 
 app = Flask(__name__)
 
-_CONFIG_PATHS = [
-    os.path.join(os.path.dirname(__file__), "uiconfig.ini"),
-    "/etc/kea/uiconfig.ini",
-]
-
-
-def _load_db_config():
-    cfg = configparser.ConfigParser()
-    cfg.read(_CONFIG_PATHS)
-    return cfg["mysql"]
-
-
-# ---------------------------------------------------------------------------
-# DB helpers
-# ---------------------------------------------------------------------------
-
-def get_connection():
-    db = _load_db_config()
-    return mysql.connector.connect(
-        host=db["host"],
-        database=db["database"],
-        user=db["user"],
-        password=db["password"],
-    )
-
-
-def int_to_ip(addr):
-    return socket.inet_ntoa(struct.pack(">I", addr))
-
-
-def bytes_to_mac(raw):
-    if raw is None:
-        return ""
-    return ":".join(f"{b:02x}" for b in raw)
-
-
-def bytes_to_hex(raw):
-    if raw is None:
-        return ""
-    return raw.hex()
-
-
-STATE_LABELS = {0: "Default", 1: "Declined", 2: "Expired-Reclaimed"}
-
-# ---------------------------------------------------------------------------
-# Validation helpers
-# ---------------------------------------------------------------------------
-
-_MAC_RE = re.compile(r'^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$')
-_HOSTNAME_LABEL_RE = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$')
-
-
-def _validate_mac(mac):
-    return bool(_MAC_RE.match(mac))
-
-
-def _validate_hostname(name):
-    """Accept a short hostname or FQDN (RFC 1123, ≤253 chars)."""
-    if not name or len(name) > 253:
-        return False
-    labels = name.rstrip('.').split('.')
-    return bool(labels) and all(_HOSTNAME_LABEL_RE.match(lbl) for lbl in labels)
-
-
-def _mac_to_bytes(mac):
-    return bytes(int(b, 16) for b in mac.split(':'))
-
-
-def _ip_to_int(ip):
-    return struct.unpack(">I", socket.inet_pton(socket.AF_INET, ip))[0]
-
-
-def fetch_subnet_ids():
-    """Return a sorted list of distinct subnet_id values in lease4."""
-    conn = get_connection()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT subnet_id FROM lease4 ORDER BY subnet_id")
-        rows = cursor.fetchall()
-        cursor.close()
-        return [r[0] for r in rows]
-    finally:
-        conn.close()
-
-
-def fetch_leases(search=None, subnet_id=None, sort_col="address", sort_dir="asc"):
-    allowed_sort_cols = {
-        "address", "hwaddr", "hostname", "expire",
-        "subnet_id", "state", "valid_lifetime", "pool_id",
-    }
-    if sort_col not in allowed_sort_cols:
-        sort_col = "address"
-    if sort_dir not in ("asc", "desc"):
-        sort_dir = "asc"
-
-    conn = get_connection()
-    try:
-        cursor = conn.cursor()
-        if subnet_id is not None:
-            cursor.execute(
-                f"SELECT * FROM lease4 WHERE subnet_id = %s ORDER BY {sort_col} {sort_dir}",
-                (subnet_id,)
-            )
-        else:
-            cursor.execute(
-                f"SELECT * FROM lease4 ORDER BY {sort_col} {sort_dir}"
-            )
-        columns = [col[0] for col in cursor.description]
-        raw_rows = cursor.fetchall()
-        cursor.close()
-    finally:
-        conn.close()
-
-    leases = []
-    now = datetime.now()
-    for row in raw_rows:
-        r = dict(zip(columns, row))
-        ip = int_to_ip(r["address"])
-        hostname = r["hostname"] or ""
-        mac = bytes_to_mac(r["hwaddr"])
-
-        # Filter client-side after conversion so we can search IP / MAC too
-        if search:
-            needle = search.lower()
-            if not any(needle in str(v).lower() for v in [ip, hostname, mac,
-                       r["subnet_id"], r["state"]]):
-                continue
-
-        expire_dt = r["expire"]
-        expired = expire_dt < now if expire_dt else False
-
-        leases.append({
-            "address":        ip,
-            "hwaddr":         mac,
-            "client_id":      bytes_to_hex(r["client_id"]),
-            "valid_lifetime": r["valid_lifetime"],
-            "expire":         expire_dt.strftime("%Y-%m-%d %H:%M:%S") if expire_dt else "",
-            "expired":        expired,
-            "subnet_id":      r["subnet_id"],
-            "fqdn_fwd":       bool(r["fqdn_fwd"]),
-            "fqdn_rev":       bool(r["fqdn_rev"]),
-            "hostname":       hostname,
-            "state":          STATE_LABELS.get(r["state"], str(r["state"])),
-            "user_context":   r["user_context"] or "",
-            "relay_id":       bytes_to_hex(r["relay_id"]),
-            "remote_id":      bytes_to_hex(r["remote_id"]),
-            "pool_id":        r["pool_id"],
-        })
-
-    return leases
-
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
-
-IDENTIFIER_TYPE_LABELS = {
-    0: "hw-address",
-    1: "duid",
-    2: "circuit-id",
-    3: "client-id",
-    4: "flex-id",
-}
-
-
-def fetch_reservations(search=None, subnet_id=None, sort_col="ipv4_address", sort_dir="asc"):
-    allowed_sort_cols = {
-        "host_id", "ipv4_address", "hostname", "dhcp4_subnet_id",
-        "dhcp_identifier_type", "dhcp4_client_classes",
-    }
-    if sort_col not in allowed_sort_cols:
-        sort_col = "ipv4_address"
-    if sort_dir not in ("asc", "desc"):
-        sort_dir = "asc"
-
-    conn = get_connection()
-    try:
-        cursor = conn.cursor()
-        if subnet_id is not None:
-            cursor.execute(
-                f"SELECT * FROM hosts WHERE dhcp4_subnet_id = %s ORDER BY {sort_col} {sort_dir}",
-                (subnet_id,),
-            )
-        else:
-            cursor.execute(
-                f"SELECT * FROM hosts ORDER BY {sort_col} {sort_dir}"
-            )
-        columns = [col[0] for col in cursor.description]
-        raw_rows = cursor.fetchall()
-        cursor.close()
-    finally:
-        conn.close()
-
-    reservations = []
-    for row in raw_rows:
-        r = dict(zip(columns, row))
-        ip = int_to_ip(r["ipv4_address"]) if r["ipv4_address"] else ""
-        next_server = int_to_ip(r["dhcp4_next_server"]) if r["dhcp4_next_server"] else ""
-        id_type = r["dhcp_identifier_type"]
-        if id_type == 0:
-            identifier = bytes_to_mac(r["dhcp_identifier"])
-        else:
-            identifier = bytes_to_hex(r["dhcp_identifier"])
-
-        if search:
-            needle = search.lower()
-            if not any(needle in str(v).lower() for v in [
-                ip, identifier, r["hostname"] or "",
-                r["dhcp4_subnet_id"], r["dhcp4_client_classes"] or "",
-            ]):
-                continue
-
-        reservations.append({
-            "host_id":             r["host_id"],
-            "identifier":          identifier,
-            "identifier_type":     IDENTIFIER_TYPE_LABELS.get(id_type, str(id_type)),
-            "dhcp4_subnet_id":     r["dhcp4_subnet_id"],
-            "ipv4_address":        ip,
-            "hostname":            r["hostname"] or "",
-            "dhcp4_client_classes": r["dhcp4_client_classes"] or "",
-            "dhcp4_next_server":   next_server,
-            "dhcp4_server_hostname": r["dhcp4_server_hostname"] or "",
-            "dhcp4_boot_file_name": r["dhcp4_boot_file_name"] or "",
-            "user_context":        r["user_context"] or "",
-            "auth_key":            r["auth_key"] or "",
-        })
-
-    return reservations
-
-
-def fetch_reservation_subnet_ids():
-    conn = get_connection()
-    try:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT DISTINCT dhcp4_subnet_id FROM hosts "
-            "WHERE dhcp4_subnet_id IS NOT NULL ORDER BY dhcp4_subnet_id"
-        )
-        rows = cursor.fetchall()
-        cursor.close()
-        return [r[0] for r in rows]
-    finally:
-        conn.close()
-
-
-LOG_FILE = "/var/log/kea/kea-dhcp4.log"
-
-
-def read_log_tail(path, n=250):
-    """Return the last *n* lines of *path* as a list. Never raises."""
-    try:
-        with open(path, "r", errors="replace") as fh:
-            return list(deque(fh, maxlen=n))
-    except FileNotFoundError:
-        return None
-    except PermissionError:
-        return None
+api_v1 = Blueprint("api_v1", __name__, url_prefix="/api/v1")
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +32,11 @@ def read_log_tail(path, n=250):
 # ---------------------------------------------------------------------------
 
 @app.route("/")
+def home():
+    return render_template("home.html", active_page="home")
+
+
+@app.route("/leases")
 def index():
     search    = request.args.get("q", "").strip()
     sort_col  = request.args.get("sort", "address")
@@ -362,10 +116,75 @@ def reservations():
 
 
 # ---------------------------------------------------------------------------
-# REST API
+# REST API — v1
 # ---------------------------------------------------------------------------
 
-@app.route("/api/reservations", methods=["POST"])
+@api_v1.route("/reservations/search", methods=["GET"])
+def api_search_reservation():
+    """Look up reservations by ?ip=, ?mac=, or ?hostname= (one at a time)."""
+    ip       = request.args.get("ip",       "").strip()
+    mac      = request.args.get("mac",      "").strip()
+    hostname = request.args.get("hostname", "").strip()
+
+    if not any([ip, mac, hostname]):
+        return jsonify({"error": "Provide at least one query parameter: ip, mac, or hostname"}), 400
+
+    try:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            if ip:
+                try:
+                    ip_int = _ip_to_int(ip)
+                except socket.error:
+                    return jsonify({"error": "Invalid IPv4 address"}), 422
+                cursor.execute(
+                    "SELECT * FROM hosts WHERE ipv4_address = %s", (ip_int,)
+                )
+            elif mac:
+                if not _validate_mac(mac):
+                    return jsonify({"error": "Invalid MAC address (expected xx:xx:xx:xx:xx:xx)"}), 422
+                cursor.execute(
+                    "SELECT * FROM hosts WHERE dhcp_identifier = %s AND dhcp_identifier_type = 0",
+                    (_mac_to_bytes(mac),),
+                )
+            else:
+                cursor.execute(
+                    "SELECT * FROM hosts WHERE hostname = %s", (hostname,)
+                )
+            columns = [col[0] for col in cursor.description]
+            raw_rows = cursor.fetchall()
+            cursor.close()
+        finally:
+            conn.close()
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    results = []
+    for row in raw_rows:
+        r = dict(zip(columns, row))
+        id_type = r["dhcp_identifier_type"]
+        results.append({
+            "host_id":               r["host_id"],
+            "identifier":            bytes_to_mac(r["dhcp_identifier"]) if id_type == 0 else bytes_to_hex(r["dhcp_identifier"]),
+            "identifier_type":       IDENTIFIER_TYPE_LABELS.get(id_type, str(id_type)),
+            "dhcp4_subnet_id":       r["dhcp4_subnet_id"],
+            "ipv4_address":          int_to_ip(r["ipv4_address"]) if r["ipv4_address"] else None,
+            "hostname":              r["hostname"],
+            "dhcp4_client_classes":  r["dhcp4_client_classes"],
+            "dhcp4_next_server":     int_to_ip(r["dhcp4_next_server"]) if r["dhcp4_next_server"] else None,
+            "dhcp4_server_hostname": r["dhcp4_server_hostname"],
+            "dhcp4_boot_file_name":  r["dhcp4_boot_file_name"],
+            "user_context":          r["user_context"],
+            "auth_key":              r["auth_key"],
+        })
+
+    if not results:
+        return jsonify({"error": "No reservation found"}), 404
+    return jsonify(results), 200
+
+
+@api_v1.route("/reservations", methods=["POST"])
 def api_create_reservation():
     data = request.get_json(silent=True)
     if not data:
@@ -433,7 +252,7 @@ def api_create_reservation():
     return jsonify({"host_id": new_id, "message": "Reservation created"}), 201
 
 
-@app.route("/api/reservations/<int:host_id>", methods=["DELETE"])
+@api_v1.route("/reservations/<int:host_id>", methods=["DELETE"])
 def api_delete_reservation(host_id):
     try:
         conn = get_connection()
@@ -451,6 +270,9 @@ def api_delete_reservation(host_id):
     if affected == 0:
         return jsonify({"error": "Reservation not found"}), 404
     return jsonify({"message": "Reservation deleted"}), 200
+
+
+app.register_blueprint(api_v1)
 
 
 @app.route("/logs")

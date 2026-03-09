@@ -153,8 +153,8 @@
         <td class="small text-muted">{{ h.user_context or '—' }}</td>
         <td class="small">{{ h.auth_key or '—' }}</td>
         <td class="text-center">
-          <button class="btn btn-danger btn-sm"
-                  onclick="deleteReservation({{ h.host_id }})">
+          <button class="btn btn-danger btn-sm js-delete"
+                  data-host-id="{{ h.host_id }}">
             <i class="bi bi-trash"></i>
           </button>
         </td>
@@ -265,7 +265,7 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
 
   let resp;
   try {
-    resp = await fetch('/api/reservations', {
+    resp = await fetch('/api/v1/reservations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -286,11 +286,16 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
 // Reset validation state when the modal is reopened
 document.getElementById('addModal').addEventListener('show.bs.modal', clearFormErrors);
 
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.js-delete');
+  if (btn) deleteReservation(parseInt(btn.dataset.hostId, 10));
+});
+
 async function deleteReservation(hostId) {
   if (!confirm('Delete reservation #' + hostId + '?')) return;
   let resp;
   try {
-    resp = await fetch('/api/reservations/' + hostId, { method: 'DELETE' });
+    resp = await fetch('/api/v1/reservations/' + hostId, { method: 'DELETE' });
   } catch (e) {
     alert('Network error: ' + e.message);
     return;

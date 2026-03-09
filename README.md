@@ -110,6 +110,163 @@ Then open `http://<host-ip>:5000` in your browser.
 - Level and text filter (client-side, instant)
 - Auto-refresh every 10 seconds (toggle)
 
+**Reservations features:**
+- Browse all static reservations from the `hosts` table
+- Search/filter by IP, MAC, hostname, or subnet
+- Add a reservation via modal form (validated client- and server-side)
+- Delete a reservation with one click
+
+---
+
+## REST API
+
+All endpoints return JSON. Replace `<host>` with your server address (e.g. `localhost:5000`).
+
+---
+
+### Search reservations
+
+```
+GET /api/v1/reservations/search
+```
+
+Provide exactly one query parameter:
+
+| Parameter  | Description                        | Example             |
+|------------|------------------------------------|---------------------|
+| `ip`       | IPv4 address of the reservation    | `?ip=192.168.1.100` |
+| `mac`      | MAC address (`xx:xx:xx:xx:xx:xx`)  | `?mac=aa:bb:cc:dd:ee:ff` |
+| `hostname` | Exact hostname (short or FQDN)     | `?hostname=mydevice` |
+
+**Responses**
+
+| Code | Meaning                              |
+|------|--------------------------------------|
+| 200  | JSON array of matching reservations  |
+| 400  | No query parameter supplied          |
+| 404  | No reservation found                 |
+| 422  | Invalid IP or MAC format             |
+
+**Example**
+
+```bash
+curl "http://<host>/api/v1/reservations/search?ip=192.168.1.100"
+curl "http://<host>/api/v1/reservations/search?mac=aa:bb:cc:dd:ee:ff"
+curl "http://<host>/api/v1/reservations/search?hostname=mydevice"
+```
+
+**Response body (200)**
+
+```json
+[
+  {
+    "host_id": 7,
+    "identifier": "aa:bb:cc:dd:ee:ff",
+    "identifier_type": "hw-address",
+    "dhcp4_subnet_id": 1,
+    "ipv4_address": "192.168.1.100",
+    "hostname": "mydevice",
+    "dhcp4_client_classes": null,
+    "dhcp4_next_server": null,
+    "dhcp4_server_hostname": null,
+    "dhcp4_boot_file_name": null,
+    "user_context": null,
+    "auth_key": null
+  }
+]
+```
+
+---
+
+### Create a reservation
+
+```
+POST /api/v1/reservations
+Content-Type: application/json
+```
+
+**Request body**
+
+| Field              | Type    | Required | Constraints                          |
+|--------------------|---------|----------|--------------------------------------|
+| `dhcp_identifier`  | string  | yes      | Valid MAC address (`xx:xx:xx:xx:xx:xx`) |
+| `ipv4_address`     | string  | yes      | Valid IPv4 address                   |
+| `dhcp4_subnet_id`  | integer | yes      | Non-negative integer                 |
+| `hostname`         | string  | yes      | Valid DNS name (short name or FQDN)  |
+
+`dhcp_identifier_type` is always stored as `0` (hw-address).
+
+**Responses**
+
+| Code | Meaning                             |
+|------|-------------------------------------|
+| 201  | Reservation created; returns new `host_id` |
+| 400  | Missing or non-JSON body            |
+| 422  | Validation errors (per-field detail)|
+| 500  | Database error                      |
+
+**Example**
+
+```bash
+curl -X POST "http://<host>/api/v1/reservations" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "dhcp_identifier": "aa:bb:cc:dd:ee:ff",
+    "ipv4_address":    "192.168.1.100",
+    "dhcp4_subnet_id": 1,
+    "hostname":        "mydevice"
+  }'
+```
+
+**Response body (201)**
+
+```json
+{ "host_id": 7, "message": "Reservation created" }
+```
+
+**Response body (422)**
+
+```json
+{
+  "errors": {
+    "dhcp_identifier": "Must be a valid MAC address (xx:xx:xx:xx:xx:xx)",
+    "ipv4_address": "Must be a valid IPv4 address"
+  }
+}
+```
+
+---
+
+### Delete a reservation
+
+```
+DELETE /api/v1/reservations/<host_id>
+```
+
+| Path parameter | Type    | Description                   |
+|----------------|---------|-------------------------------|
+| `host_id`      | integer | `host_id` from the hosts table |
+
+**Responses**
+
+| Code | Meaning                   |
+|------|---------------------------|
+| 200  | Reservation deleted       |
+| 404  | Reservation not found     |
+| 500  | Database error            |
+
+**Example**
+
+```bash
+curl -X DELETE "http://<host>/api/v1/reservations/7"
+```
+
+**Response body (200)**
+
+```json
+{ "message": "Reservation deleted" }
+```
+
 ---
 
 ## Production Deployment on Ubuntu Noble
