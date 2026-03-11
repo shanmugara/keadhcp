@@ -211,6 +211,46 @@ def api_search_lease():
     return jsonify(results), 200
 
 
+@api_v1.route("/leases", methods=["DELETE"])
+def api_delete_lease():
+    """Delete a lease by ?ip= or ?mac=."""
+    ip  = request.args.get("ip",  "").strip()
+    mac = request.args.get("mac", "").strip()
+
+    if not ip and not mac:
+        return jsonify({"error": "Provide either ip or mac as a query parameter"}), 400
+
+    try:
+        if ip:
+            try:
+                key = _ip_to_int(ip)
+            except socket.error:
+                return jsonify({"error": "Invalid IPv4 address"}), 422
+            sql = "DELETE FROM lease4 WHERE address = %s"
+        else:
+            if not _validate_mac(mac):
+                return jsonify({"error": "Invalid MAC address (expected xx:xx:xx:xx:xx:xx)"}), 422
+            key = _mac_to_bytes(mac)
+            sql = "DELETE FROM lease4 WHERE hwaddr = %s"
+
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(sql, (key,))
+            affected = cursor.rowcount
+            conn.commit()
+            cursor.close()
+        finally:
+            conn.close()
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    if affected == 0:
+        return jsonify({"error": "No matching lease found"}), 404
+
+    return jsonify({"deleted": affected}), 200
+
+
 @api_v1.route("/reservations/search", methods=["GET"])
 def api_search_reservation():
     """Look up reservations by ?ip=, ?mac=, or ?hostname= (one at a time)."""
