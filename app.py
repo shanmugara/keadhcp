@@ -119,6 +119,98 @@ def reservations():
 # REST API — v1
 # ---------------------------------------------------------------------------
 
+@api_v1.route("/leases", methods=["GET"])
+def api_list_leases():
+    """List leases with optional ?q=, ?subnet=, ?sort=, ?dir= filters."""
+    search    = request.args.get("q",      "").strip()
+    subnet_id = request.args.get("subnet", "").strip()
+    sort_col  = request.args.get("sort",   "address")
+    sort_dir  = request.args.get("dir",    "asc")
+
+    subnet_id_int = None
+    if subnet_id:
+        try:
+            subnet_id_int = int(subnet_id)
+        except ValueError:
+            return jsonify({"error": "subnet must be an integer"}), 422
+
+    try:
+        leases = fetch_leases(
+            search=search or None,
+            subnet_id=subnet_id_int,
+            sort_col=sort_col,
+            sort_dir=sort_dir,
+        )
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    return jsonify(leases), 200
+
+
+@api_v1.route("/leases/search", methods=["GET"])
+def api_search_lease():
+    """Exact lookup of a lease by ?ip=, ?mac=, or ?hostname=."""
+    ip       = request.args.get("ip",       "").strip()
+    mac      = request.args.get("mac",      "").strip()
+    hostname = request.args.get("hostname", "").strip()
+
+    if not any([ip, mac, hostname]):
+        return jsonify({"error": "Provide at least one query parameter: ip, mac, or hostname"}), 400
+
+    try:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            if ip:
+                try:
+                    ip_int = _ip_to_int(ip)
+                except socket.error:
+                    return jsonify({"error": "Invalid IPv4 address"}), 422
+                cursor.execute("SELECT * FROM lease4 WHERE address = %s", (ip_int,))
+            elif mac:
+                if not _validate_mac(mac):
+                    return jsonify({"error": "Invalid MAC address (expected xx:xx:xx:xx:xx:xx)"}), 422
+                cursor.execute("SELECT * FROM lease4 WHERE hwaddr = %s", (_mac_to_bytes(mac),))
+            else:
+                cursor.execute("SELECT * FROM lease4 WHERE hostname = %s", (hostname,))
+            columns = [col[0] for col in cursor.description]
+            raw_rows = cursor.fetchall()
+            cursor.close()
+        finally:
+            conn.close()
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    if not raw_rows:
+        return jsonify({"error": "No lease found"}), 404
+
+    from datetime import datetime as _dt
+    from queries import STATE_LABELS
+    now = _dt.now()
+    results = []
+    for row in raw_rows:
+        r = dict(zip(columns, row))
+        expire_dt = r["expire"]
+        results.append({
+            "address":        int_to_ip(r["address"]),
+            "hwaddr":         bytes_to_mac(r["hwaddr"]),
+            "client_id":      bytes_to_hex(r["client_id"]),
+            "valid_lifetime": r["valid_lifetime"],
+            "expire":         expire_dt.strftime("%Y-%m-%d %H:%M:%S") if expire_dt else None,
+            "expired":        (expire_dt < now) if expire_dt else False,
+            "subnet_id":      r["subnet_id"],
+            "fqdn_fwd":       bool(r["fqdn_fwd"]),
+            "fqdn_rev":       bool(r["fqdn_rev"]),
+            "hostname":       r["hostname"] or "",
+            "state":          STATE_LABELS.get(r["state"], str(r["state"])),
+            "user_context":   r["user_context"] or "",
+            "relay_id":       bytes_to_hex(r["relay_id"]),
+            "remote_id":      bytes_to_hex(r["remote_id"]),
+            "pool_id":        r["pool_id"],
+        })
+    return jsonify(results), 200
+
+
 @api_v1.route("/reservations/search", methods=["GET"])
 def api_search_reservation():
     """Look up reservations by ?ip=, ?mac=, or ?hostname= (one at a time)."""
@@ -148,7 +240,7 @@ def api_search_reservation():
                     "SELECT * FROM hosts WHERE dhcp_identifier = %s AND dhcp_identifier_type = 0",
                     (_mac_to_bytes(mac),),
                 )
-            else:
+            elif hostname:
                 cursor.execute(
                     "SELECT * FROM hosts WHERE hostname = %s", (hostname,)
                 )
