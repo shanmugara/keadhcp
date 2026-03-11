@@ -124,6 +124,141 @@ All endpoints return JSON. Replace `<host>` with your server address (e.g. `loca
 
 ---
 
+### List leases
+
+```
+GET /api/v1/leases
+```
+
+Optional query parameters:
+
+| Parameter | Description                              | Example              |
+|-----------|------------------------------------------|----------------------|
+| `q`       | Search term (IP, MAC, or hostname)       | `?q=192.168.1`       |
+| `subnet`  | Filter by subnet ID (integer)            | `?subnet=1`          |
+| `sort`    | Column to sort by (default: `address`)   | `?sort=hostname`     |
+| `dir`     | Sort direction: `asc` or `desc`          | `?dir=desc`          |
+
+**Responses**
+
+| Code | Meaning                        |
+|------|--------------------------------|
+| 200  | JSON array of matching leases  |
+| 422  | `subnet` is not an integer     |
+| 500  | Database error                 |
+
+**Examples**
+
+```bash
+# All leases
+curl "http://<host>/api/v1/leases"
+
+# Search for a subnet
+curl "http://<host>/api/v1/leases?subnet=1"
+
+# Search by partial hostname, sorted descending
+curl "http://<host>/api/v1/leases?q=mydevice&sort=expire&dir=desc"
+```
+
+---
+
+### Search leases
+
+```
+GET /api/v1/leases/search
+```
+
+Provide exactly one query parameter for an exact match:
+
+| Parameter  | Description                       | Example                    |
+|------------|-----------------------------------|----------------------------|
+| `ip`       | IPv4 address of the lease         | `?ip=192.168.1.100`        |
+| `mac`      | MAC address (`xx:xx:xx:xx:xx:xx`) | `?mac=aa:bb:cc:dd:ee:ff`   |
+| `hostname` | Exact hostname                    | `?hostname=mydevice`       |
+
+**Responses**
+
+| Code | Meaning                           |
+|------|-----------------------------------|
+| 200  | JSON array of matching leases     |
+| 400  | No query parameter supplied       |
+| 404  | No lease found                    |
+| 422  | Invalid IP or MAC format          |
+
+**Examples**
+
+```bash
+curl "http://<host>/api/v1/leases/search?ip=192.168.1.100"
+curl "http://<host>/api/v1/leases/search?mac=aa:bb:cc:dd:ee:ff"
+curl "http://<host>/api/v1/leases/search?hostname=mydevice"
+```
+
+**Response body (200)**
+
+```json
+[
+  {
+    "address":        "192.168.1.100",
+    "hwaddr":         "aa:bb:cc:dd:ee:ff",
+    "client_id":      null,
+    "valid_lifetime": 86400,
+    "expire":         "2026-03-11 12:00:00",
+    "expired":        false,
+    "subnet_id":      1,
+    "fqdn_fwd":       true,
+    "fqdn_rev":       true,
+    "hostname":       "mydevice",
+    "state":          "default",
+    "user_context":   "",
+    "relay_id":       null,
+    "remote_id":      null,
+    "pool_id":        0
+  }
+]
+```
+
+---
+
+### Delete a lease
+
+```
+DELETE /api/v1/leases
+```
+
+Provide exactly one query parameter:
+
+| Parameter | Description                       | Example                    |
+|-----------|-----------------------------------|----------------------------|
+| `ip`      | IPv4 address of the lease         | `?ip=192.168.1.100`        |
+| `mac`     | MAC address (`xx:xx:xx:xx:xx:xx`) | `?mac=aa:bb:cc:dd:ee:ff`   |
+
+When using `?mac=`, all leases sharing that MAC address are deleted.
+
+**Responses**
+
+| Code | Meaning                                  |
+|------|------------------------------------------|
+| 200  | Lease(s) deleted; returns count          |
+| 400  | Neither `ip` nor `mac` supplied          |
+| 404  | No matching lease found                  |
+| 422  | Invalid IP or MAC format                 |
+| 500  | Database error                           |
+
+**Examples**
+
+```bash
+curl -X DELETE "http://<host>/api/v1/leases?ip=192.168.1.100"
+curl -X DELETE "http://<host>/api/v1/leases?mac=aa:bb:cc:dd:ee:ff"
+```
+
+**Response body (200)**
+
+```json
+{ "deleted": 1 }
+```
+
+---
+
 ### Search reservations
 
 ```
