@@ -6,6 +6,8 @@ Run:
 Then open http://127.0.0.1:5000
 """
 
+import csv
+import io
 import socket
 
 from flask import Blueprint, Flask, jsonify, render_template, request
@@ -382,6 +384,124 @@ def api_create_reservation():
         return jsonify({"error": str(exc)}), 500
 
     return jsonify({"host_id": new_id, "message": "Reservation created"}), 201
+
+
+@api_v1.route("/reservations/import", methods=["POST"])
+def api_import_reservations():
+    """Import reservations from an uploaded CSV file.
+
+    Expected CSV columns: ipaddress, clientid, scopeid, name
+    Dashes in clientid are converted to colons automatically.
+    """
+    if "csv_file" not in request.files:
+        return jsonify({"error": "No file uploaded (expected field name: csv_file)"}), 400
+
+    csv_file = request.files["csv_file"]
+    if csv_file.filename == "":
+        return jsonify({"error": "No file selected"}), 400
+
+    try:
+        content = csv_file.read().decode("utf-8-sig")  # utf-8-sig strips BOM if present
+    except Exception as exc:
+        return jsonify({"error": f"Cannot read file: {exc}"}), 400
+
+    reader = csv.DictReader(io.StringIO(content))
+    try:
+        rows = list(reader)
+    except Exception as exc:
+        return jsonify({"error": f"CSV parse error: {exc}"}), 400
+
+    if not rows:
+        return jsonify({"error": "CSV file is empty or has no data rows"}), 400
+
+    if reader.fieldnames:
+        headers = {f.strip().lower() for f in reader.fieldnames if f}
+        required = {"ipaddress", "clientid", "scopeid", "name"}
+        missing = required - headers
+        if missing:
+            return jsonify({"error": f"Missing CSV columns: {', '.join(sorted(missing))}"}), 400
+
+    imported = 0
+    skipped = 0
+    row_errors = []
+
+    try:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            for i, row in enumerate(rows, start=2):  # row 1 is the header
+                # Normalise keys and strip surrounding whitespace/quotes
+                norm = {k.strip().lower(): (v or "").strip() for k, v in row.items() if k}
+
+                ip_str    = norm.get("ipaddress", "")
+                client_id = norm.get("clientid", "").replace("-", ":")
+                scope_str = norm.get("scopeid", "")
+                hostname  = norm.get("name", "")
+
+                errors = []
+
+                if not ip_str:
+                    errors.append("ipaddress is required")
+                else:
+                    try:
+                        socket.inet_pton(socket.AF_INET, ip_str)
+                    except socket.error:
+                        errors.append(f"ipaddress '{ip_str}' is not a valid IPv4 address")
+
+                if not client_id:
+                    errors.append("clientid is required")
+                elif not _validate_mac(client_id):
+                    errors.append(f"clientid '{client_id}' is not a valid MAC address")
+
+                subnet_val = None
+                if not scope_str:
+                    errors.append("scopeid is required")
+                else:
+                    try:
+                        subnet_val = int(scope_str)
+                        if subnet_val < 0:
+                            raise ValueError
+                    except (ValueError, TypeError):
+                        errors.append(f"scopeid '{scope_str}' must be a non-negative integer")
+
+                if not hostname:
+                    errors.append("name is required")
+                elif not _validate_hostname(hostname):
+                    errors.append(f"name '{hostname}' is not a valid hostname")
+
+                if errors:
+                    row_errors.append({"row": i, "data": norm, "errors": errors})
+                    continue
+
+                try:
+                    cursor.execute(
+                        """
+                        INSERT IGNORE INTO hosts
+                          (dhcp_identifier, dhcp_identifier_type,
+                           dhcp4_subnet_id, ipv4_address, hostname)
+                        VALUES (%s, %s, %s, %s, %s)
+                        """,
+                        (_mac_to_bytes(client_id), 0, subnet_val, _ip_to_int(ip_str), hostname),
+                    )
+                    if cursor.rowcount == 1:
+                        imported += 1
+                    else:
+                        skipped += 1
+                except Exception as exc:
+                    row_errors.append({"row": i, "data": norm, "errors": [str(exc)]})
+
+            conn.commit()
+            cursor.close()
+        finally:
+            conn.close()
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    return jsonify({
+        "imported": imported,
+        "skipped":  skipped,
+        "errors":   row_errors,
+    }), 200
 
 
 @api_v1.route("/reservations/<int:host_id>", methods=["DELETE"])

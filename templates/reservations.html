@@ -39,7 +39,10 @@
 </div>
 
 <!-- Toolbar -->
-<div class="d-flex justify-content-end mb-3">
+<div class="d-flex justify-content-end gap-2 mb-3">
+  <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#importModal">
+    <i class="bi bi-upload me-1"></i>Import CSV
+  </button>
   <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#addModal">
     <i class="bi bi-plus-lg me-1"></i>Add Reservation
   </button>
@@ -168,6 +171,46 @@
   </table>
 </div>
 <div class="text-muted small mt-2">{{ hosts | length }} reservation(s) shown</div>
+
+<!-- ── Import Reservations Modal ── -->
+<div class="modal fade" id="importModal" tabindex="-1" aria-labelledby="importModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="importModalLabel">
+          <i class="bi bi-upload me-2"></i>Import Reservations from CSV
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-3">
+          Expected columns: <code>ipaddress, clientid, scopeid, name</code>.<br>
+          Dashes in <code>clientid</code> (e.g. <code>00-e0-81-b8-56-b0</code>) are converted to colons automatically.
+          Duplicate entries (same MAC + subnet or same IP) are skipped silently.
+        </p>
+        <div id="importAlert" class="alert d-none"></div>
+        <form id="importForm" novalidate>
+          <div class="mb-3">
+            <label for="f_csvfile" class="form-label fw-semibold">CSV File <span class="text-danger">*</span></label>
+            <input id="f_csvfile" name="csv_file" type="file" class="form-control" accept=".csv,text/csv" required>
+          </div>
+        </form>
+        <div id="importResults" class="d-none">
+          <hr>
+          <h6>Import Results</h6>
+          <div id="importSummary" class="mb-2"></div>
+          <div id="importErrorsList"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-primary" id="importBtn">
+          <i class="bi bi-upload me-1"></i>Import
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- ── Add Reservation Modal ── -->
 <div class="modal fade" id="addModal" tabindex="-1" aria-labelledby="addModalLabel" aria-hidden="true">
@@ -307,5 +350,88 @@ async function deleteReservation(hostId) {
     alert('Error: ' + (json.error || 'Unknown error'));
   }
 }
+
+// ── CSV Import ──────────────────────────────────────────────────────────────
+document.getElementById('importBtn').addEventListener('click', async () => {
+  const alertEl   = document.getElementById('importAlert');
+  const resultsEl = document.getElementById('importResults');
+  const summaryEl = document.getElementById('importSummary');
+  const errorsEl  = document.getElementById('importErrorsList');
+
+  alertEl.className = 'alert d-none';
+  resultsEl.classList.add('d-none');
+  errorsEl.innerHTML = '';
+
+  const fileInput = document.getElementById('f_csvfile');
+  if (!fileInput.files.length) {
+    alertEl.className = 'alert alert-warning';
+    alertEl.textContent = 'Please select a CSV file.';
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('csv_file', fileInput.files[0]);
+
+  const importBtn = document.getElementById('importBtn');
+  importBtn.disabled = true;
+  importBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Importing\u2026';
+
+  let resp;
+  try {
+    resp = await fetch('/api/v1/reservations/import', { method: 'POST', body: formData });
+  } catch (e) {
+    alertEl.className = 'alert alert-danger';
+    alertEl.textContent = 'Network error: ' + e.message;
+    importBtn.disabled = false;
+    importBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Import';
+    return;
+  }
+
+  importBtn.disabled = false;
+  importBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Import';
+
+  const json = await resp.json();
+
+  if (!resp.ok) {
+    alertEl.className = 'alert alert-danger';
+    alertEl.textContent = json.error || 'Import failed.';
+    return;
+  }
+
+  const { imported, skipped, errors } = json;
+
+  resultsEl.classList.remove('d-none');
+  summaryEl.innerHTML =
+    `<span class="badge bg-success me-1">${imported} imported</span>` +
+    `<span class="badge bg-warning text-dark me-1">${skipped} skipped (duplicate)</span>` +
+    (errors.length ? `<span class="badge bg-danger me-1">${errors.length} row error(s)</span>` : '');
+
+  if (errors.length) {
+    let html = '<table class="table table-sm table-bordered table-danger mt-2">' +
+               '<thead><tr><th>Row</th><th>Data</th><th>Errors</th></tr></thead><tbody>';
+    for (const err of errors) {
+      const dataStr = Object.entries(err.data).map(([k, v]) => `${k}=${v}`).join(', ');
+      html += `<tr><td>${err.row}</td><td><small>${dataStr}</small></td><td>${err.errors.join('; ')}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    errorsEl.innerHTML = html;
+  }
+
+  if (imported > 0) {
+    alertEl.className = 'alert alert-success';
+    alertEl.textContent = `Successfully imported ${imported} reservation(s). Reloading\u2026`;
+    setTimeout(() => location.reload(), 1500);
+  } else if (!errors.length) {
+    alertEl.className = 'alert alert-info';
+    alertEl.textContent = 'No new reservations were imported (all rows were duplicates).';
+  }
+});
+
+document.getElementById('importModal').addEventListener('show.bs.modal', () => {
+  document.getElementById('importAlert').className = 'alert d-none';
+  document.getElementById('importResults').classList.add('d-none');
+  document.getElementById('importErrorsList').innerHTML = '';
+  document.getElementById('f_csvfile').value = '';
+});
 </script>
 {% endblock %}
