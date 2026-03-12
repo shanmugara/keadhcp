@@ -11,6 +11,8 @@ WorkingDirectory=/opt/keadhcp
 Environment="PATH=/opt/keadhcp/venv/bin"
 ExecStart=/opt/keadhcp/venv/bin/gunicorn \
     --workers 4 \
+    --timeout 120 \
+    --keep-alive 5 \
     --bind 0.0.0.0:5000 \
     --access-logfile /var/log/keadhcp/access.log \
     --error-logfile  /var/log/keadhcp/error.log \

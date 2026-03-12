@@ -1,9 +1,12 @@
 """queries.py — database query functions and log reader."""
 
+import socket
+import struct
 from collections import deque
 from datetime import datetime
 
 from db import bytes_to_hex, bytes_to_mac, get_connection, int_to_ip
+from validators import _validate_mac
 
 STATE_LABELS = {0: "Default", 1: "Declined", 2: "Expired-Reclaimed"}
 
@@ -42,6 +45,11 @@ def fetch_subnet_ids():
         conn.close()
 
 
+def _mac_to_bytes(mac):
+    """Convert colon-separated MAC string to bytes."""
+    return bytes(int(b, 16) for b in mac.split(":"))
+
+
 def fetch_leases(search=None, subnet_id=None, sort_col="address", sort_dir="asc"):
     allowed_sort_cols = {
         "address", "hwaddr", "hostname", "expire",
@@ -52,18 +60,39 @@ def fetch_leases(search=None, subnet_id=None, sort_col="address", sort_dir="asc"
     if sort_dir not in ("asc", "desc"):
         sort_dir = "asc"
 
+    conditions = []
+    params = []
+    client_side_filter = False
+
+    if subnet_id is not None:
+        conditions.append("subnet_id = %s")
+        params.append(subnet_id)
+
+    if search:
+        # Try exact IP match first.
+        try:
+            ip_int = struct.unpack(">I", socket.inet_pton(socket.AF_INET, search.strip()))[0]
+            conditions.append("address = %s")
+            params.append(ip_int)
+        except (OSError, struct.error):
+            # Try exact MAC match.
+            if _validate_mac(search.strip()):
+                conditions.append("hwaddr = %s")
+                params.append(_mac_to_bytes(search.strip()))
+            else:
+                # Fall back to hostname prefix search in SQL; also do a
+                # broader client-side pass for subnet_id / state matches.
+                conditions.append("hostname LIKE %s")
+                params.append(f"%{search}%")
+                client_side_filter = True
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    sql = f"SELECT * FROM lease4 {where} ORDER BY {sort_col} {sort_dir}"
+
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        if subnet_id is not None:
-            cursor.execute(
-                f"SELECT * FROM lease4 WHERE subnet_id = %s ORDER BY {sort_col} {sort_dir}",
-                (subnet_id,)
-            )
-        else:
-            cursor.execute(
-                f"SELECT * FROM lease4 ORDER BY {sort_col} {sort_dir}"
-            )
+        cursor.execute(sql, params)
         columns = [col[0] for col in cursor.description]
         raw_rows = cursor.fetchall()
         cursor.close()
@@ -78,8 +107,9 @@ def fetch_leases(search=None, subnet_id=None, sort_col="address", sort_dir="asc"
         hostname = r["hostname"] or ""
         mac = bytes_to_mac(r["hwaddr"])
 
-        # Filter client-side after conversion so we can search IP / MAC too
-        if search:
+        # When hostname LIKE returned rows, also accept subnet_id/state matches
+        # that the SQL wouldn't have filtered out.
+        if client_side_filter and search:
             needle = search.lower()
             if not any(needle in str(v).lower() for v in [ip, hostname, mac,
                        r["subnet_id"], r["state"]]):
@@ -119,18 +149,35 @@ def fetch_reservations(search=None, subnet_id=None, sort_col="ipv4_address", sor
     if sort_dir not in ("asc", "desc"):
         sort_dir = "asc"
 
+    conditions = []
+    params = []
+    client_side_filter = False
+
+    if subnet_id is not None:
+        conditions.append("dhcp4_subnet_id = %s")
+        params.append(subnet_id)
+
+    if search:
+        try:
+            ip_int = struct.unpack(">I", socket.inet_pton(socket.AF_INET, search.strip()))[0]
+            conditions.append("ipv4_address = %s")
+            params.append(ip_int)
+        except (OSError, struct.error):
+            if _validate_mac(search.strip()):
+                conditions.append("dhcp_identifier = %s")
+                params.append(_mac_to_bytes(search.strip()))
+            else:
+                conditions.append("hostname LIKE %s")
+                params.append(f"%{search}%")
+                client_side_filter = True
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    sql = f"SELECT * FROM hosts {where} ORDER BY {sort_col} {sort_dir}"
+
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        if subnet_id is not None:
-            cursor.execute(
-                f"SELECT * FROM hosts WHERE dhcp4_subnet_id = %s ORDER BY {sort_col} {sort_dir}",
-                (subnet_id,),
-            )
-        else:
-            cursor.execute(
-                f"SELECT * FROM hosts ORDER BY {sort_col} {sort_dir}"
-            )
+        cursor.execute(sql, params)
         columns = [col[0] for col in cursor.description]
         raw_rows = cursor.fetchall()
         cursor.close()
@@ -148,7 +195,7 @@ def fetch_reservations(search=None, subnet_id=None, sort_col="ipv4_address", sor
         else:
             identifier = bytes_to_hex(r["dhcp_identifier"])
 
-        if search:
+        if client_side_filter and search:
             needle = search.lower()
             if not any(needle in str(v).lower() for v in [
                 ip, identifier, r["hostname"] or "",

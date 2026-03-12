@@ -26,6 +26,11 @@ def get_connection():
         database=db["database"],
         user=db["user"],
         password=db["password"],
+        # Fail fast if the DB host is unreachable instead of hanging a worker.
+        connection_timeout=10,
+        # Apply session-level read/write timeouts so a slow or locked query
+        # doesn't block the worker indefinitely.
+        init_command="SET SESSION net_read_timeout=60, net_write_timeout=60",
     )
 
 
