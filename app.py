@@ -8,6 +8,8 @@ Then open http://127.0.0.1:5000
 
 import csv
 import io
+import logging
+import logging.handlers
 import socket
 
 from flask import Blueprint, Flask, jsonify, render_template, request
@@ -25,6 +27,20 @@ from queries import (
 from validators import _validate_hostname, _validate_mac
 
 app = Flask(__name__)
+
+# Audit logger — writes reservation add/delete events to a dedicated log file.
+_audit_log = logging.getLogger("keadhcp.audit")
+_audit_log.setLevel(logging.INFO)
+_audit_handler = logging.handlers.RotatingFileHandler(
+    "/var/log/keadhcp/api_audit.log",
+    maxBytes=10 * 1024 * 1024,  # 10 MB
+    backupCount=5,
+    delay=True,
+)
+_audit_handler.setFormatter(
+    logging.Formatter("%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%dT%H:%M:%S")
+)
+_audit_log.addHandler(_audit_handler)
 
 api_v1 = Blueprint("api_v1", __name__, url_prefix="/api/v1")
 
@@ -381,8 +397,16 @@ def api_create_reservation():
         finally:
             conn.close()
     except Exception as exc:
+        _audit_log.error(
+            "RESERVATION CREATE FAILED caller=%s mac=%s ip=%s subnet=%s hostname=%s error=%s",
+            request.remote_addr, mac, ipv4, subnet_id_val, hostname, exc,
+        )
         return jsonify({"error": str(exc)}), 500
 
+    _audit_log.info(
+        "RESERVATION CREATE caller=%s mac=%s ip=%s subnet=%s hostname=%s host_id=%s",
+        request.remote_addr, mac, ipv4, subnet_id_val, hostname, new_id,
+    )
     return jsonify({"host_id": new_id, "message": "Reservation created"}), 201
 
 
@@ -497,6 +521,14 @@ def api_import_reservations():
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
+    _audit_log.info(
+        "RESERVATION IMPORT caller=%s file=%s imported=%d skipped=%d row_errors=%d",
+        request.remote_addr,
+        csv_file.filename,
+        imported,
+        skipped,
+        len(row_errors),
+    )
     return jsonify({
         "imported": imported,
         "skipped":  skipped,
@@ -517,10 +549,18 @@ def api_delete_reservation(host_id):
         finally:
             conn.close()
     except Exception as exc:
+        _audit_log.error(
+            "RESERVATION DELETE FAILED caller=%s host_id=%s error=%s",
+            request.remote_addr, host_id, exc,
+        )
         return jsonify({"error": str(exc)}), 500
 
     if affected == 0:
         return jsonify({"error": "Reservation not found"}), 404
+    _audit_log.info(
+        "RESERVATION DELETE caller=%s host_id=%s",
+        request.remote_addr, host_id,
+    )
     return jsonify({"message": "Reservation deleted"}), 200
 
 
