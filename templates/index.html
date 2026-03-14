@@ -69,6 +69,48 @@
   </div>
 </form>
 
+<!-- Column visibility dropdown -->
+<div class="d-flex justify-content-end mb-2">
+  <div class="dropdown">
+    <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+            id="colToggleBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside"
+            aria-expanded="false">
+      <i class="bi bi-layout-three-columns me-1"></i>Columns
+    </button>
+    <ul class="dropdown-menu dropdown-menu-end p-2" id="colDropdown" style="min-width:200px">
+      {% set toggle_cols = [
+          ("address",        "IP Address"),
+          ("hwaddr",         "MAC Address"),
+          ("hostname",       "Hostname"),
+          ("subnet_id",      "Subnet"),
+          ("pool_id",        "Pool"),
+          ("valid_lifetime", "Lifetime (s)"),
+          ("expire",         "Expires"),
+          ("state",          "State"),
+          ("fqdn_fwd",       "FQDN Fwd"),
+          ("fqdn_rev",       "FQDN Rev"),
+          ("client_id",      "Client ID"),
+          ("relay_id",       "Relay ID"),
+          ("remote_id",      "Remote ID"),
+          ("user_context",   "User Context"),
+      ] %}
+      {% for col_id, col_label in toggle_cols %}
+      <li>
+        <label class="dropdown-item d-flex align-items-center gap-2 py-1">
+          <input type="checkbox" class="form-check-input col-toggle-cb" value="{{ col_id }}" checked>
+          {{ col_label }}
+        </label>
+      </li>
+      {% endfor %}
+      <li><hr class="dropdown-divider"></li>
+      <li class="px-2 d-flex gap-2">
+        <button class="btn btn-outline-secondary btn-sm w-50" id="colShowAll">All</button>
+        <button class="btn btn-outline-secondary btn-sm w-50" id="colHideAll">None</button>
+      </li>
+    </ul>
+  </div>
+</div>
+
 <!-- Leases table -->
 <div class="table-wrapper bg-white rounded shadow-sm p-3">
   <table class="table table-bordered table-hover table-sm align-middle mb-0">
@@ -92,7 +134,7 @@
         ] %}
         {% for col_id, col_label in cols %}
         {% set next_dir = "desc" if (sort_col == col_id and sort_dir == "asc") else "asc" %}
-        <th>
+        <th data-col="{{ col_id }}">
           <a href="?q={{ search }}&sort={{ col_id }}&dir={{ next_dir }}">
             {{ col_label }}
             {% if sort_col == col_id %}
@@ -110,30 +152,30 @@
       {% endif %}
       {% for l in leases %}
       <tr class="{{ 'expired-row' if l.expired else '' }}">
-        <td><code>{{ l.address }}</code></td>
-        <td><code>{{ l.hwaddr }}</code></td>
-        <td>{{ l.hostname }}</td>
-        <td>{{ l.subnet_id }}</td>
-        <td>{{ l.pool_id }}</td>
-        <td>{{ l.valid_lifetime }}</td>
-        <td>
+        <td data-col="address"><code>{{ l.address }}</code></td>
+        <td data-col="hwaddr"><code>{{ l.hwaddr }}</code></td>
+        <td data-col="hostname">{{ l.hostname }}</td>
+        <td data-col="subnet_id">{{ l.subnet_id }}</td>
+        <td data-col="pool_id">{{ l.pool_id }}</td>
+        <td data-col="valid_lifetime">{{ l.valid_lifetime }}</td>
+        <td data-col="expire">
           <span class="badge {{ 'badge-expired' if l.expired else 'badge-active' }}">
             {{ l.expire }}
           </span>
         </td>
-        <td>{{ l.state }}</td>
-        <td class="text-center">
+        <td data-col="state">{{ l.state }}</td>
+        <td data-col="fqdn_fwd" class="text-center">
           {% if l.fqdn_fwd %}<i class="bi bi-check-circle-fill text-success"></i>
           {% else %}<i class="bi bi-x-circle text-secondary"></i>{% endif %}
         </td>
-        <td class="text-center">
+        <td data-col="fqdn_rev" class="text-center">
           {% if l.fqdn_rev %}<i class="bi bi-check-circle-fill text-success"></i>
           {% else %}<i class="bi bi-x-circle text-secondary"></i>{% endif %}
         </td>
-        <td><small><code>{{ l.client_id }}</code></small></td>
-        <td><small><code>{{ l.relay_id }}</code></small></td>
-        <td><small><code>{{ l.remote_id }}</code></small></td>
-        <td><small>{{ l.user_context }}</small></td>
+        <td data-col="client_id"><small><code>{{ l.client_id }}</code></small></td>
+        <td data-col="relay_id"><small><code>{{ l.relay_id }}</code></small></td>
+        <td data-col="remote_id"><small><code>{{ l.remote_id }}</code></small></td>
+        <td data-col="user_context"><small>{{ l.user_context }}</small></td>
         <td class="text-center">
           <button class="btn btn-sm btn-outline-success reserve-btn"
                   data-ip="{{ l.address }}"
@@ -155,6 +197,55 @@
 
 {% block scripts %}
 <script>
+// ── Column visibility ────────────────────────────────────────────────────────
+(function () {
+  const STORE_KEY = 'leases_hidden_cols';
+  const table     = document.querySelector('.table-wrapper table');
+
+  function hiddenSet() {
+    try { return new Set(JSON.parse(localStorage.getItem(STORE_KEY)) || []); }
+    catch { return new Set(); }
+  }
+
+  function applyVisibility(hidden) {
+    table.querySelectorAll('[data-col]').forEach(el => {
+      el.style.display = hidden.has(el.dataset.col) ? 'none' : '';
+    });
+    document.querySelectorAll('.col-toggle-cb').forEach(cb => {
+      cb.checked = !hidden.has(cb.value);
+    });
+  }
+
+  function save(hidden) {
+    localStorage.setItem(STORE_KEY, JSON.stringify([...hidden]));
+  }
+
+  // Initial apply
+  applyVisibility(hiddenSet());
+
+  document.querySelectorAll('.col-toggle-cb').forEach(cb => {
+    cb.addEventListener('change', function () {
+      const hidden = hiddenSet();
+      if (this.checked) hidden.delete(this.value);
+      else              hidden.add(this.value);
+      save(hidden);
+      applyVisibility(hidden);
+    });
+  });
+
+  document.getElementById('colShowAll').addEventListener('click', () => {
+    save(new Set());
+    applyVisibility(new Set());
+  });
+
+  document.getElementById('colHideAll').addEventListener('click', () => {
+    const all = new Set([...document.querySelectorAll('.col-toggle-cb')].map(c => c.value));
+    save(all);
+    applyVisibility(all);
+  });
+})();
+
+// ── Reserve button ───────────────────────────────────────────────────────────
 document.querySelectorAll('.reserve-btn').forEach(function(btn) {
   btn.addEventListener('click', function() {
     var ip = this.dataset.ip;

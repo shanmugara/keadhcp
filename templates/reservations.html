@@ -40,6 +40,43 @@
 
 <!-- Toolbar -->
 <div class="d-flex justify-content-end gap-2 mb-3">
+  <!-- Column visibility dropdown -->
+  <div class="dropdown">
+    <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+            id="colToggleBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside"
+            aria-expanded="false">
+      <i class="bi bi-layout-three-columns me-1"></i>Columns
+    </button>
+    <ul class="dropdown-menu dropdown-menu-end p-2" id="colDropdown" style="min-width:210px">
+      {% set toggle_cols = [
+          ("host_id",               "ID"),
+          ("ipv4_address",          "IP Address"),
+          ("identifier",            "Identifier (MAC / ID)"),
+          ("identifier_type",       "Identifier Type"),
+          ("dhcp4_subnet_id",       "Subnet"),
+          ("hostname",              "Hostname"),
+          ("dhcp4_client_classes",  "Client Classes"),
+          ("dhcp4_next_server",     "Next Server"),
+          ("dhcp4_server_hostname", "Server Hostname"),
+          ("dhcp4_boot_file_name",  "Boot File"),
+          ("user_context",          "User Context"),
+          ("auth_key",              "Auth Key"),
+      ] %}
+      {% for col_id, col_label in toggle_cols %}
+      <li>
+        <label class="dropdown-item d-flex align-items-center gap-2 py-1">
+          <input type="checkbox" class="form-check-input col-toggle-cb" value="{{ col_id }}" checked>
+          {{ col_label }}
+        </label>
+      </li>
+      {% endfor %}
+      <li><hr class="dropdown-divider"></li>
+      <li class="px-2 d-flex gap-2">
+        <button class="btn btn-outline-secondary btn-sm w-50" id="colShowAll">All</button>
+        <button class="btn btn-outline-secondary btn-sm w-50" id="colHideAll">None</button>
+      </li>
+    </ul>
+  </div>
   <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#importModal">
     <i class="bi bi-upload me-1"></i>Import CSV
   </button>
@@ -104,7 +141,7 @@
           {% if col_id in sortable %}
             {% set sort_key = "dhcp_identifier_type" if col_id == "identifier_type" else col_id %}
             {% set next_dir = "desc" if (sort_col == sort_key and sort_dir == "asc") else "asc" %}
-            <th>
+            <th data-col="{{ col_id }}">
               <a href="?q={{ search }}&subnet={{ subnet_id }}&sort={{ sort_key }}&dir={{ next_dir }}">
                 {{ col_label }}
                 {% if sort_col == sort_key %}
@@ -113,7 +150,7 @@
               </a>
             </th>
           {% else %}
-            <th>{{ col_label }}</th>
+            <th data-col="{{ col_id }}">{{ col_label }}</th>
           {% endif %}
         {% endfor %}
         <th>Actions</th>
@@ -122,16 +159,16 @@
     <tbody>
       {% for h in hosts %}
       <tr>
-        <td class="text-muted small">{{ h.host_id }}</td>
-        <td>
+        <td data-col="host_id" class="text-muted small">{{ h.host_id }}</td>
+        <td data-col="ipv4_address">
           {% if h.ipv4_address %}
             <code>{{ h.ipv4_address }}</code>
           {% else %}
             <span class="text-muted">—</span>
           {% endif %}
         </td>
-        <td><code>{{ h.identifier }}</code></td>
-        <td>
+        <td data-col="identifier"><code>{{ h.identifier }}</code></td>
+        <td data-col="identifier_type">
           <span class="badge
             {% if h.identifier_type == 'hw-address' %}bg-primary
             {% elif h.identifier_type == 'client-id' %}bg-success
@@ -139,22 +176,22 @@
             {% else %}bg-secondary
             {% endif %}">{{ h.identifier_type }}</span>
         </td>
-        <td>{{ h.dhcp4_subnet_id if h.dhcp4_subnet_id else '—' }}</td>
-        <td>{{ h.hostname or '—' }}</td>
-        <td>
+        <td data-col="dhcp4_subnet_id">{{ h.dhcp4_subnet_id if h.dhcp4_subnet_id else '—' }}</td>
+        <td data-col="hostname">{{ h.hostname or '—' }}</td>
+        <td data-col="dhcp4_client_classes">
           {% if h.dhcp4_client_classes %}
             <span class="badge bg-info text-dark">{{ h.dhcp4_client_classes }}</span>
           {% else %}—{% endif %}
         </td>
-        <td>{{ h.dhcp4_next_server or '—' }}</td>
-        <td>{{ h.dhcp4_server_hostname or '—' }}</td>
-        <td>
+        <td data-col="dhcp4_next_server">{{ h.dhcp4_next_server or '—' }}</td>
+        <td data-col="dhcp4_server_hostname">{{ h.dhcp4_server_hostname or '—' }}</td>
+        <td data-col="dhcp4_boot_file_name">
           {% if h.dhcp4_boot_file_name %}
             <code class="small">{{ h.dhcp4_boot_file_name }}</code>
           {% else %}—{% endif %}
         </td>
-        <td class="small text-muted">{{ h.user_context or '—' }}</td>
-        <td class="small">{{ h.auth_key or '—' }}</td>
+        <td data-col="user_context" class="small text-muted">{{ h.user_context or '—' }}</td>
+        <td data-col="auth_key" class="small">{{ h.auth_key or '—' }}</td>
         <td class="text-center">
           <button class="btn btn-danger btn-sm js-delete"
                   data-host-id="{{ h.host_id }}">
@@ -264,6 +301,54 @@
 
 {% block scripts %}
 <script>
+// ── Column visibility ──────────────────────────────────────────────────────
+(function () {
+  const STORE_KEY = 'reservations_hidden_cols';
+  const table     = document.querySelector('.table-wrapper table');
+
+  function hiddenSet() {
+    try { return new Set(JSON.parse(localStorage.getItem(STORE_KEY)) || []); }
+    catch { return new Set(); }
+  }
+
+  function applyVisibility(hidden) {
+    table.querySelectorAll('[data-col]').forEach(el => {
+      el.style.display = hidden.has(el.dataset.col) ? 'none' : '';
+    });
+    document.querySelectorAll('.col-toggle-cb').forEach(cb => {
+      cb.checked = !hidden.has(cb.value);
+    });
+  }
+
+  function save(hidden) {
+    localStorage.setItem(STORE_KEY, JSON.stringify([...hidden]));
+  }
+
+  applyVisibility(hiddenSet());
+
+  document.querySelectorAll('.col-toggle-cb').forEach(cb => {
+    cb.addEventListener('change', function () {
+      const hidden = hiddenSet();
+      if (this.checked) hidden.delete(this.value);
+      else              hidden.add(this.value);
+      save(hidden);
+      applyVisibility(hidden);
+    });
+  });
+
+  document.getElementById('colShowAll').addEventListener('click', () => {
+    save(new Set());
+    applyVisibility(new Set());
+  });
+
+  document.getElementById('colHideAll').addEventListener('click', () => {
+    const all = new Set([...document.querySelectorAll('.col-toggle-cb')].map(c => c.value));
+    save(all);
+    applyVisibility(all);
+  });
+})();
+
+// ── Reservation form ───────────────────────────────────────────────────────
 const FIELD_MAP = {
   dhcp_identifier: 'f_mac',
   ipv4_address:    'f_ipv4',
