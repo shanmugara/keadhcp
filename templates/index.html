@@ -101,6 +101,7 @@
           </a>
         </th>
         {% endfor %}
+        <th>Actions</th>
       </tr>
     </thead>
     <tbody>
@@ -133,6 +134,13 @@
         <td><small><code>{{ l.relay_id }}</code></small></td>
         <td><small><code>{{ l.remote_id }}</code></small></td>
         <td><small>{{ l.user_context }}</small></td>
+        <td class="text-center">
+          <button class="btn btn-sm btn-outline-success reserve-btn"
+                  data-ip="{{ l.address }}"
+                  title="Create a static reservation for this lease">
+            <i class="bi bi-bookmark-plus"></i> Reserve
+          </button>
+        </td>
       </tr>
       {% endfor %}
     </tbody>
@@ -143,4 +151,49 @@
   Showing {{ leases | length }} lease(s){% if search %} matching "<strong>{{ search }}</strong>"{% endif %}{% if subnet_id %} in subnet <strong>{{ subnet_id }}</strong>{% endif %}.
 </p>
 
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.reserve-btn').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    var ip = this.dataset.ip;
+    var cell = this;
+    cell.disabled = true;
+    cell.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span>';
+
+    fetch('/api/v1/leases/' + encodeURIComponent(ip) + '/reserve', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+    })
+    .then(function(resp) {
+      return resp.json().then(function(data) {
+        return {status: resp.status, data: data};
+      });
+    })
+    .then(function(result) {
+      if (result.status === 201) {
+        cell.className = 'btn btn-sm btn-success';
+        cell.innerHTML = '<i class="bi bi-bookmark-check-fill"></i> Reserved';
+      } else if (result.status === 409) {
+        cell.className = 'btn btn-sm btn-secondary';
+        cell.innerHTML = '<i class="bi bi-bookmark-fill"></i> Already Reserved';
+      } else {
+        cell.disabled = false;
+        cell.className = 'btn btn-sm btn-outline-danger reserve-btn';
+        cell.dataset.ip = ip;
+        cell.title = result.data.error || 'Error creating reservation';
+        cell.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Failed';
+      }
+    })
+    .catch(function(err) {
+      cell.disabled = false;
+      cell.className = 'btn btn-sm btn-outline-danger reserve-btn';
+      cell.dataset.ip = ip;
+      cell.title = 'Network error: ' + err.message;
+      cell.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Failed';
+    });
+  });
+});
+</script>
 {% endblock %}

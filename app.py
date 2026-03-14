@@ -536,6 +536,83 @@ def api_import_reservations():
     }), 200
 
 
+@api_v1.route("/leases/<ip>/reserve", methods=["POST"])
+def api_reserve_from_lease(ip):
+    """Create a static reservation from an existing lease.
+
+    Looks up the lease for *ip*, checks that no reservation already exists
+    for that address, then inserts a matching row into the hosts table using
+    the lease's MAC address, hostname, and subnet_id.
+
+    Returns 409 if a reservation for the IP already exists.
+    """
+    try:
+        ip_int = _ip_to_int(ip)
+    except socket.error:
+        return jsonify({"error": "Invalid IPv4 address"}), 422
+
+    try:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+
+            # Fetch the corresponding lease.
+            cursor.execute("SELECT * FROM lease4 WHERE address = %s", (ip_int,))
+            columns = [col[0] for col in cursor.description]
+            row = cursor.fetchone()
+            if not row:
+                cursor.close()
+                return jsonify({"error": "Lease not found"}), 404
+
+            lease = dict(zip(columns, row))
+            mac = bytes_to_mac(lease["hwaddr"])
+            hostname = lease["hostname"] or None
+            subnet_id = lease["subnet_id"]
+
+            if not mac or not _validate_mac(mac):
+                cursor.close()
+                return jsonify({"error": "Lease has no valid MAC address"}), 422
+
+            # Check whether a reservation already exists for this IP.
+            cursor.execute(
+                "SELECT host_id FROM hosts WHERE ipv4_address = %s", (ip_int,)
+            )
+            existing = cursor.fetchone()
+            if existing:
+                cursor.close()
+                return jsonify({
+                    "error": "Reservation already exists",
+                    "host_id": existing[0],
+                }), 409
+
+            cursor.execute(
+                """
+                INSERT INTO hosts
+                  (dhcp_identifier, dhcp_identifier_type,
+                   dhcp4_subnet_id, ipv4_address, hostname)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (_mac_to_bytes(mac), 0, subnet_id, ip_int, hostname),
+            )
+            conn.commit()
+            new_id = cursor.lastrowid
+            cursor.close()
+        finally:
+            conn.close()
+    except Exception as exc:
+        _audit_log.error(
+            "RESERVATION CREATE FROM LEASE FAILED caller=%s ip=%s error=%s",
+            request.remote_addr, ip, exc,
+        )
+        return jsonify({"error": str(exc)}), 500
+
+    _audit_log.info(
+        "RESERVATION CREATE FROM LEASE caller=%s ip=%s mac=%s hostname=%s subnet=%s host_id=%s",
+        request.remote_addr, ip, mac, hostname, subnet_id, new_id,
+    )
+    return jsonify({"host_id": new_id, "message": "Reservation created"}), 201
+
+
 @api_v1.route("/reservations/<int:host_id>", methods=["DELETE"])
 def api_delete_reservation(host_id):
     try:
