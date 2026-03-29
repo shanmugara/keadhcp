@@ -15,6 +15,7 @@ import socket
 from flask import Blueprint, Flask, jsonify, render_template, request
 
 from db import _ip_to_int, _mac_to_bytes, bytes_to_hex, bytes_to_mac, get_connection, int_to_ip
+from ddnsupdate import delete_dns_record
 from queries import (
     IDENTIFIER_TYPE_LABELS,
     LOG_FILE,
@@ -234,6 +235,8 @@ def api_delete_lease():
     """Delete a lease by ?ip= or ?mac=."""
     ip  = request.args.get("ip",  "").strip()
     mac = request.args.get("mac", "").strip()
+    record_name = request.args.get("record_name", "").strip()  # optional, for DDNS deletion
+
 
     if not ip and not mac:
         return jsonify({"error": "Provide either ip or mac as a query parameter"}), 400
@@ -262,10 +265,17 @@ def api_delete_lease():
             conn.close()
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
-
+    
     if affected == 0:
         return jsonify({"error": "No matching lease found"}), 404
-
+    
+    # Delete DDNS record if configured
+    try:
+        if record_name:
+            delete_dns_record("A", record_name)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
     return jsonify({"deleted": affected}), 200
 
 
