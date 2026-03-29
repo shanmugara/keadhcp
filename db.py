@@ -7,20 +7,22 @@ import struct
 
 import mysql.connector
 
-_CONFIG_PATHS = [
-    os.path.join(os.path.dirname(__file__), "uiconfig.ini"),
-    "/etc/kea/uiconfig.ini",
-]
+import load_cfg
+
+# _CONFIG_PATHS = [
+#     os.path.join(os.path.dirname(__file__), "uiconfig.ini"),
+#     "/etc/kea/uiconfig.ini",
+# ]
 
 
-def _load_db_config():
-    cfg = configparser.ConfigParser()
-    cfg.read(_CONFIG_PATHS)
-    return cfg["mysql"]
+# def _load_db_config():
+#     cfg = configparser.ConfigParser()
+#     cfg.read(_CONFIG_PATHS)
+#     return cfg["mysql"]
 
 
 def get_connection():
-    db = _load_db_config()
+    db = load_cfg.load_db_config()
     return mysql.connector.connect(
         host=db["host"],
         database=db["database"],

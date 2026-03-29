@@ -3,3 +3,7 @@ host     = localhost
 database = kea
 user     = kea
 password = secret
+[ddns]
+tsig_key_name = tsig-key
+tsig_key_secret = secret
+server = a.b.c.d
