@@ -12,7 +12,7 @@
 
 <!-- Stats row -->
 <div class="row g-3 mb-4">
-  <div class="col-sm-4 col-lg-3">
+  <div class="col-sm-4 col-lg-4">
     <div class="stat-card stat-card-primary">
       <div class="stat-icon"><i class="bi bi-bookmark-star"></i></div>
       <div>
@@ -21,7 +21,7 @@
       </div>
     </div>
   </div>
-  <div class="col-sm-4 col-lg-3">
+  <div class="col-sm-4 col-lg-4">
     <div class="stat-card stat-card-info">
       <div class="stat-icon"><i class="bi bi-geo-alt"></i></div>
       <div>
@@ -30,7 +30,7 @@
       </div>
     </div>
   </div>
-  <div class="col-sm-4 col-lg-3">
+  <div class="col-sm-4 col-lg-4">
     <div class="stat-card stat-card-secondary">
       <div class="stat-icon"><i class="bi bi-diagram-3"></i></div>
       <div>
@@ -80,10 +80,10 @@
       </li>
     </ul>
   </div>
-  <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#importModal">
+  <button class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#importModal">
     <i class="bi bi-upload me-1"></i>Import CSV
   </button>
-  <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#addModal">
+  <button class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#addModal">
     <i class="bi bi-plus-lg me-1"></i>Add Reservation
   </button>
 </div>
@@ -196,9 +196,10 @@
         <td data-col="user_context" class="small text-muted">{{ h.user_context or '—' }}</td>
         <td data-col="auth_key" class="small">{{ h.auth_key or '—' }}</td>
         <td class="text-center">
-          <button class="btn btn-danger btn-sm js-delete"
-                  data-host-id="{{ h.host_id }}">
-            <i class="bi bi-trash"></i>
+          <button class="btn btn-sm btn-outline-danger js-delete"
+                  data-host-id="{{ h.host_id }}"
+                  title="Delete this reservation">
+            <i class="bi bi-trash"></i> Delete
           </button>
         </td>
       </tr>
