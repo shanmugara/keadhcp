@@ -6,12 +6,19 @@
 
 {% block head %}
 <style>
-  .log-toolbar { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+  .log-toolbar {
+    display: flex; gap: .5rem; align-items: center; flex-wrap: wrap;
+    background: #fff;
+    border: 1px solid var(--kea-border);
+    border-radius: var(--kea-radius);
+    box-shadow: var(--kea-shadow-sm);
+    padding: .65rem .85rem;
+  }
   #line-filter { width: 220px; }
   .level-badge {
     display: inline-block; width: 56px; text-align: center;
     font-size: .7rem; font-weight: 700; padding: 1px 4px;
-    border-radius: 3px; margin-right: 4px;
+    border-radius: 4px; margin-right: 4px;
   }
   .lvl-ERROR  { background:#ff4444; color:#fff; }
   .lvl-WARN   { background:#e3b341; color:#000; }
