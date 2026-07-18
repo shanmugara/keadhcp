@@ -18,9 +18,46 @@
       --kea-shadow-sm:   0 1px 2px rgba(16,24,40,.06);
       --kea-shadow:      0 4px 12px rgba(16,24,40,.08), 0 1px 2px rgba(16,24,40,.04);
       --kea-shadow-lg:   0 16px 32px rgba(16,24,40,.16);
+
+      /* Retint Bootstrap's primary utility classes (bg-primary, text-primary,
+         badge bg-primary, …) to match the sidebar/stat-card accent. Bootstrap
+         components like .btn-primary use fixed hex, not these vars, so they
+         get their own override below. */
+      --bs-primary:     var(--kea-accent);
+      --bs-primary-rgb: 79, 86, 224;
     }
 
     body { background: var(--kea-bg); color: #1c2030; }
+
+    /* ── Unify accent color (Bootstrap ships .btn-primary etc. with fixed
+       hex per-component vars, so retinting --bs-primary above doesn't
+       reach them) ── */
+    .btn-primary {
+      --bs-btn-bg: var(--kea-accent);
+      --bs-btn-border-color: var(--kea-accent);
+      --bs-btn-hover-bg: var(--kea-accent-dark);
+      --bs-btn-hover-border-color: var(--kea-accent-dark);
+      --bs-btn-active-bg: var(--kea-accent-dark);
+      --bs-btn-active-border-color: var(--kea-accent-dark);
+      --bs-btn-disabled-bg: var(--kea-accent);
+      --bs-btn-disabled-border-color: var(--kea-accent);
+      --bs-btn-focus-shadow-rgb: 79, 86, 224;
+    }
+    .btn-outline-primary {
+      --bs-btn-color: var(--kea-accent);
+      --bs-btn-border-color: var(--kea-accent);
+      --bs-btn-hover-bg: var(--kea-accent);
+      --bs-btn-hover-border-color: var(--kea-accent);
+      --bs-btn-active-bg: var(--kea-accent);
+      --bs-btn-active-border-color: var(--kea-accent);
+      --bs-btn-disabled-color: var(--kea-accent);
+      --bs-btn-disabled-border-color: var(--kea-accent);
+      --bs-btn-focus-shadow-rgb: 79, 86, 224;
+    }
+    .form-check-input:checked {
+      background-color: var(--kea-accent);
+      border-color: var(--kea-accent);
+    }
 
     /* ── Sidebar ── */
     #sidebar {
