@@ -9,11 +9,15 @@ User=keadhcp
 Group=keadhcp
 WorkingDirectory=/opt/keadhcp
 Environment="PATH=/opt/keadhcp/venv/bin"
+# Port 80 is privileged; grant just enough capability to bind it without
+# running gunicorn as root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 ExecStart=/opt/keadhcp/venv/bin/gunicorn \
     --workers 4 \
     --timeout 120 \
     --keep-alive 5 \
-    --bind 0.0.0.0:5000 \
+    --bind 0.0.0.0:80 \
     --access-logfile /var/log/keadhcp/access.log \
     --error-logfile  /var/log/keadhcp/error.log \
     app:app

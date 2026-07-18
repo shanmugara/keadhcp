@@ -2,8 +2,8 @@ import configparser
 import os
 
 _CONFIG_PATHS = [
-    os.path.join(os.path.dirname(__file__), "uiconfig.ini"),
-    "/etc/kea/uiconfig.ini",
+    os.path.join(os.path.dirname(__file__), "config.ini"),
+    "/etc/keadhcp/config.ini",
 ]
 
 

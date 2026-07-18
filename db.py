@@ -1,24 +1,11 @@
 """db.py — database connection and raw data-type helpers."""
 
-import configparser
-import os
 import socket
 import struct
 
 import mysql.connector
 
 import load_cfg
-
-# _CONFIG_PATHS = [
-#     os.path.join(os.path.dirname(__file__), "uiconfig.ini"),
-#     "/etc/kea/uiconfig.ini",
-# ]
-
-
-# def _load_db_config():
-#     cfg = configparser.ConfigParser()
-#     cfg.read(_CONFIG_PATHS)
-#     return cfg["mysql"]
 
 
 def get_connection():

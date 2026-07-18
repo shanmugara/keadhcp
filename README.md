@@ -11,7 +11,8 @@ A set of Python tools for managing and viewing [Kea DHCP](https://www.isc.org/ke
 | `app.py` | Flask web UI to browse leases and view logs |
 | `config.ini` | Database credentials (gitignored — do not commit) |
 | `config.ini.example` | Template for `config.ini` |
-| `keadhcp.service` | systemd unit file for production deployment |
+| `keadhcp.service` | systemd unit file for production deployment (port 80) |
+| `install.sh` | Installs the app under `/opt/keadhcp` and registers the systemd service |
 
 ## Requirements
 
@@ -406,61 +407,31 @@ curl -X DELETE "http://<host>/api/v1/reservations/7"
 
 ## Production Deployment on Ubuntu Noble
 
-### 1. Clone the repository
+The `keadhcp` systemd service runs gunicorn bound to port 80 (privileged), granted via
+`AmbientCapabilities=CAP_NET_BIND_SERVICE` in `keadhcp.service` so it doesn't need to run as root.
+
+### Quick install (`install.sh`)
 
 ```bash
-sudo git clone <repo-url> /opt/keadhcp
+git clone <repo-url> keadhcp
+cd keadhcp
+sudo apt install python3-venv python3-pip rsync -y
+sudo ./install.sh
 ```
 
-### 2. Create a dedicated system user
+`install.sh` automates everything below: it creates the `keadhcp` system user, installs the app to
+`/opt/keadhcp`, builds a venv and installs dependencies, seeds `/etc/keadhcp/config.ini` from the template
+(without overwriting an existing one), creates `/var/log/keadhcp`, adds `keadhcp` to the `adm` group for
+Kea log access, installs and enables the systemd service, and opens port 80 via `ufw` if it's active.
+
+After installing, edit the config with real credentials and restart:
 
 ```bash
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin keadhcp
-sudo chown -R keadhcp:keadhcp /opt/keadhcp
+sudo nano /etc/keadhcp/config.ini      # set real [mysql] / [ddns] credentials
+sudo systemctl restart keadhcp
 ```
 
-### 3. Create a virtual environment and install dependencies
-
-```bash
-sudo apt install python3-venv python3-pip -y
-cd /opt/keadhcp
-sudo -u keadhcp python3 -m venv venv
-sudo -u keadhcp venv/bin/pip install -r requirements.txt
-```
-
-### 4. Create and secure the config file
-
-```bash
-sudo mkdir /etc/keadhcp
-sudo cp /opt/keadhcp/config.ini.example /etc/keadhcp/config.ini
-sudo nano /etc/keadhcp/config.ini      # set real credentials
-sudo chown root:keadhcp /etc/keadhcp/config.ini
-sudo chmod 640 /etc/keadhcp/config.ini
-```
-
-### 5. Create the log directory
-
-```bash
-sudo mkdir /var/log/keadhcp
-sudo chown keadhcp:keadhcp /var/log/keadhcp
-```
-
-### 6. Grant access to Kea logs
-
-The `adm` group typically has read access to `/var/log`:
-```bash
-sudo usermod -aG adm keadhcp
-```
-
-### 7. Install and enable the systemd service
-
-```bash
-sudo cp /opt/keadhcp/keadhcp.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now keadhcp
-```
-
-### 8. Check status and logs
+Check status and logs:
 
 ```bash
 sudo systemctl status keadhcp
@@ -471,13 +442,51 @@ Gunicorn access and error logs are written to:
 - `/var/log/keadhcp/access.log`
 - `/var/log/keadhcp/error.log`
 
-### 9. Open the firewall port (if UFW is active)
+The app will be available at `http://<host-ip>` (port 80) and will restart automatically on boot or
+failure.
+
+### Manual installation
+
+If you'd rather not use `install.sh`, here are the equivalent steps:
 
 ```bash
-sudo ufw allow 5000/tcp
+# 1. Clone the repository
+sudo git clone <repo-url> /opt/keadhcp
+
+# 2. Create a dedicated system user
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin keadhcp
+sudo chown -R keadhcp:keadhcp /opt/keadhcp
+
+# 3. Create a virtual environment and install dependencies
+sudo apt install python3-venv python3-pip -y
+cd /opt/keadhcp
+sudo -u keadhcp python3 -m venv venv
+sudo -u keadhcp venv/bin/pip install -r requirements.txt
+
+# 4. Create and secure the config file
+sudo mkdir /etc/keadhcp
+sudo cp /opt/keadhcp/config.ini.example /etc/keadhcp/config.ini
+sudo nano /etc/keadhcp/config.ini      # set real credentials
+sudo chown root:keadhcp /etc/keadhcp/config.ini
+sudo chmod 640 /etc/keadhcp/config.ini
+
+# 5. Create the log directory
+sudo mkdir /var/log/keadhcp
+sudo chown keadhcp:keadhcp /var/log/keadhcp
+
+# 6. Grant access to Kea logs (the `adm` group typically has read access to /var/log)
+sudo usermod -aG adm keadhcp
+
+# 7. Install and enable the systemd service
+sudo cp /opt/keadhcp/keadhcp.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now keadhcp
+
+# 8. Open the firewall port (if UFW is active)
+sudo ufw allow 80/tcp
 ```
 
-The app will be available at `http://<host-ip>:5000` and will restart automatically on boot or failure.
+Then check status/logs and access the app as described above.
 
 ---
 
