@@ -196,9 +196,10 @@
         <td data-col="user_context" class="small text-muted">{{ h.user_context or '—' }}</td>
         <td data-col="auth_key" class="small">{{ h.auth_key or '—' }}</td>
         <td class="text-center">
-          <button class="btn btn-danger btn-sm js-delete"
-                  data-host-id="{{ h.host_id }}">
-            <i class="bi bi-trash"></i>
+          <button class="btn btn-sm btn-outline-danger js-delete"
+                  data-host-id="{{ h.host_id }}"
+                  title="Delete this reservation">
+            <i class="bi bi-trash"></i> Delete
           </button>
         </td>
       </tr>
