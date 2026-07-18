@@ -12,27 +12,30 @@
 
 <!-- Stats row -->
 <div class="row g-3 mb-4">
-  <div class="col-sm-4 col-lg-2">
-    <div class="card stat-card text-white bg-primary">
-      <div class="card-body py-2">
-        <div class="fs-4 fw-bold">{{ hosts | length }}</div>
-        <div class="small">Total reservations</div>
+  <div class="col-sm-4 col-lg-3">
+    <div class="stat-card stat-card-primary">
+      <div class="stat-icon"><i class="bi bi-bookmark-star"></i></div>
+      <div>
+        <div class="stat-value">{{ hosts | length }}</div>
+        <div class="stat-label">Total reservations</div>
       </div>
     </div>
   </div>
-  <div class="col-sm-4 col-lg-2">
-    <div class="card stat-card text-white bg-info">
-      <div class="card-body py-2">
-        <div class="fs-4 fw-bold">{{ hosts | selectattr("ipv4_address") | list | length }}</div>
-        <div class="small">With IPv4 address</div>
+  <div class="col-sm-4 col-lg-3">
+    <div class="stat-card stat-card-info">
+      <div class="stat-icon"><i class="bi bi-geo-alt"></i></div>
+      <div>
+        <div class="stat-value">{{ hosts | selectattr("ipv4_address") | list | length }}</div>
+        <div class="stat-label">With IPv4 address</div>
       </div>
     </div>
   </div>
-  <div class="col-sm-4 col-lg-2">
-    <div class="card stat-card text-white bg-secondary">
-      <div class="card-body py-2">
-        <div class="fs-4 fw-bold">{{ subnet_ids | length }}</div>
-        <div class="small">Subnets</div>
+  <div class="col-sm-4 col-lg-3">
+    <div class="stat-card stat-card-secondary">
+      <div class="stat-icon"><i class="bi bi-diagram-3"></i></div>
+      <div>
+        <div class="stat-value">{{ subnet_ids | length }}</div>
+        <div class="stat-label">Subnets</div>
       </div>
     </div>
   </div>
@@ -86,7 +89,7 @@
 </div>
 
 <!-- Search / filter bar -->
-<form method="get" class="row g-2 mb-3 align-items-center">
+<form method="get" class="filter-bar row g-2 mb-3 align-items-center">
   <input type="hidden" name="sort" value="{{ sort_col }}">
   <input type="hidden" name="dir"  value="{{ sort_dir }}">
   <div class="col-md-4">
@@ -117,9 +120,9 @@
 </form>
 
 <!-- Reservations table -->
-<div class="table-wrapper bg-white rounded shadow-sm p-3">
-  <table class="table table-bordered table-hover table-sm align-middle mb-0">
-    <thead class="table-dark">
+<div class="table-wrapper bg-white p-3">
+  <table class="table kea-table table-hover table-sm align-middle mb-0">
+    <thead>
       <tr>
         {% set cols = [
             ("host_id",               "ID"),
